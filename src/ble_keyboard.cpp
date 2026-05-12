@@ -41,6 +41,7 @@ static int reconnectKeyboardIndex = 0;
 // Activity tracking (used by connect task to initialise idle timer)
 static unsigned long lastBleKeystrokeMs = 0;
 static bool bleConnIdleMode = false;
+static unsigned long connEstablishedAt = 0;
 
 // Device discovery variables
 static std::vector<BleDeviceInfo> discoveredDevices;
@@ -151,6 +152,11 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
 
   // Track activity for adaptive connection parameters
   lastBleKeystrokeMs = millis();
+  if (bleConnIdleMode && pClient && pClient->isConnected()) {
+    pClient->updateConnParams(8, 12, 0, 100);
+    bleConnIdleMode = false;
+    DBG_PRINTLN("[BLE] Switched to active connection params");
+  }
 }
 
 // --- Callbacks (static instances, no heap allocation) ---
@@ -360,6 +366,7 @@ static void bleConnectTask(void* param) {
     bleState = BLEState::CONNECTED;
     lastBleKeystrokeMs = millis();
     bleConnIdleMode = false;
+    connEstablishedAt = millis();
     connectTaskHandle = nullptr;
     vTaskDelete(NULL);
     return;
@@ -427,12 +434,13 @@ static void bleConnectTask(void* param) {
   reconnectDelay = 5000;  // Reset backoff after successful connection
   bleConnIdleMode = false;
   lastBleKeystrokeMs = millis();  // Start the 3s idle timer from now, not from boot
+  connEstablishedAt = millis();
   DBG_PRINTLN("[BLE-Task] Keyboard ready!");
 
   // NOTE: updateConnParams() is intentionally NOT called here.  Calling it immediately
   // after connecting triggers a reentrancy crash with Keychron keyboards (the keyboard
-  // sends its own BLE_GAP_EVENT_CONN_UPDATE_REQ at the same time).  The adaptive params
-  // logic in bleLoop() handles this safely from the main task after a stable delay.
+  // sends its own BLE_GAP_EVENT_CONN_UPDATE_REQ at the same time).  Instead, bleLoop()
+  // transitions to idle params after a 5s settling delay + 3s of inactivity.
 
   // If the device didn't broadcast a name during scanning, read it from GATT now.
   // Generic Access service (0x1800) Device Name characteristic (0x2A00).
@@ -648,9 +656,21 @@ void bleLoop() {
     isScanning = false;
     continuousScanning = false;
     DBG_PRINTF("[BLE] Scan complete — found %d devices\n", (int)discoveredDevices.size());
-    // Trigger screen refresh to show final results
     extern bool screenDirty;
     screenDirty = true;
+  }
+
+  // Adaptive connection parameters: switch to slower interval when idle to save battery.
+  // Wait 5s after connection before touching params (avoids reentrancy with Keychron keyboards).
+  if (bleState == BLEState::CONNECTED && pClient && pClient->isConnected()) {
+    unsigned long now = millis();
+    if (now - connEstablishedAt > 5000) {
+      if (!bleConnIdleMode && (now - lastBleKeystrokeMs > 3000)) {
+        pClient->updateConnParams(32, 48, 0, 500);
+        bleConnIdleMode = true;
+        DBG_PRINTLN("[BLE] Switched to idle connection params");
+      }
+    }
   }
 
   // Launch connect task if requested (non-blocking)

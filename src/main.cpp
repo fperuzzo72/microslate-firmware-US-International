@@ -181,8 +181,6 @@ void setup() {
   DBG_INIT();
   DBG_PRINTLN("MicroSlate starting...");
 
-  setCpuFrequencyMhz(80);
-
   gpio.begin();
   display.begin();
 
