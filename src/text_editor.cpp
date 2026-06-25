@@ -169,14 +169,51 @@ void editorInsertChar(char c) {
   ensureCursorVisible(storedVisibleLines);
 }
 
+// Insert a UTF-8 encoded string (one or more bytes) at the cursor position.
+// Each byte is inserted individually so the existing single-char shift logic
+// is reused; the renderer already iterates codepoints via utf8NextCodepoint.
+void editorInsertUtf8(const char* utf8str) {
+  if (!utf8str) return;
+  for (const char* p = utf8str; *p != '\0'; p++) {
+    editorInsertChar(*p);
+  }
+}
+
+// UTF-8 helpers for deletion
+// Returns the number of bytes of the codepoint that *ends* at position `pos-1`.
+static int utf8BackLen(int pos) {
+  if (pos <= 0) return 0;
+  int len = 1;
+  // Walk back over continuation bytes (10xxxxxx = 0x80..0xBF)
+  while (len < 4 && pos - len > 0 &&
+         (static_cast<unsigned char>(textBuffer[pos - len - 1]) & 0xC0) == 0x80) {
+    len++;
+  }
+  return len;
+}
+
+// Returns the number of bytes of the codepoint that *starts* at position `pos`.
+static int utf8FwdLen(int pos) {
+  if (pos >= (int)textLength) return 0;
+  unsigned char c = static_cast<unsigned char>(textBuffer[pos]);
+  if (c < 0x80) return 1;
+  if ((c >> 5) == 0x6) return 2;
+  if ((c >> 4) == 0xE) return 3;
+  if ((c >> 3) == 0x1E) return 4;
+  return 1;  // fallback for stray continuation byte
+}
+
 void editorDeleteChar() {
   if (cursorPosition <= 0 || textLength == 0) return;
 
-  for (int i = cursorPosition - 1; i < (int)textLength - 1; i++) {
-    textBuffer[i] = textBuffer[i + 1];
+  int len = utf8BackLen(cursorPosition);  // bytes to remove (1–4)
+  int newPos = cursorPosition - len;
+
+  for (int i = newPos; i < (int)textLength - len; i++) {
+    textBuffer[i] = textBuffer[i + len];
   }
-  cursorPosition--;
-  textLength--;
+  cursorPosition = newPos;
+  textLength -= len;
   textBuffer[textLength] = '\0';
   unsavedChanges = true;
   lineBreaksDirty = true;
@@ -188,10 +225,12 @@ void editorDeleteChar() {
 void editorDeleteForward() {
   if (cursorPosition >= (int)textLength) return;
 
-  for (int i = cursorPosition; i < (int)textLength - 1; i++) {
-    textBuffer[i] = textBuffer[i + 1];
+  int len = utf8FwdLen(cursorPosition);  // bytes to remove (1–4)
+
+  for (int i = cursorPosition; i < (int)textLength - len; i++) {
+    textBuffer[i] = textBuffer[i + len];
   }
-  textLength--;
+  textLength -= len;
   textBuffer[textLength] = '\0';
   unsavedChanges = true;
   lineBreaksDirty = true;
@@ -202,7 +241,8 @@ void editorDeleteForward() {
 
 void editorMoveCursorLeft() {
   if (cursorPosition > 0) {
-    cursorPosition--;
+    int len = utf8BackLen(cursorPosition);
+    cursorPosition -= len;
     editorRecalculateLines();
     ensureCursorVisible(storedVisibleLines);
   }
@@ -210,7 +250,8 @@ void editorMoveCursorLeft() {
 
 void editorMoveCursorRight() {
   if (cursorPosition < (int)textLength) {
-    cursorPosition++;
+    int len = utf8FwdLen(cursorPosition);
+    cursorPosition += len;
     editorRecalculateLines();
     ensureCursorVisible(storedVisibleLines);
   }
