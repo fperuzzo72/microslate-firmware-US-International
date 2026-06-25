@@ -3,6 +3,7 @@
 #include "file_manager.h"
 #include "ble_keyboard.h"
 #include "wifi_sync.h"
+#include "dead_keys.h"
 
 #include <Arduino.h>
 #include <SDCardManager.h>
@@ -191,6 +192,7 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
 
   // ESC = save and return to file browser
   if (keyCode == HID_KEY_ESCAPE) {
+    deadKeyReset();  // discard any pending dead key
     if (editorHasUnsavedChanges()) saveCurrentFile();
     currentState = UIState::FILE_BROWSER;
     screenDirty = true;
@@ -223,11 +225,25 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
 
-  // Printable character
+  // Printable character — process through US-International dead key engine
   char c = hidToAscii(keyCode, modifiers);
   if (c != 0) {
-    editorInsertChar(c);
-    screenDirty = true;
+    const char* composed = deadKeyProcess(c);
+    if (composed == nullptr) {
+      // No dead key involved: insert normally
+      editorInsertChar(c);
+      screenDirty = true;
+    } else if (composed[0] != '\0') {
+      // Composed result (or flushed dead key literal): insert UTF-8 string
+      editorInsertUtf8(composed);
+      screenDirty = true;
+      // If a non-composable char was requeued, insert it too
+      char req = deadKeyTakeRequeue();
+      if (req != 0) {
+        editorInsertChar(req);
+      }
+    }
+    // else: composed[0] == '\0' → dead key stored, nothing to insert yet
   }
 }
 
@@ -270,12 +286,14 @@ static void handleRenameKey(uint8_t keyCode, uint8_t modifiers) {
   }
 
   if (keyCode == HID_KEY_ESCAPE) {
+    deadKeyReset();  // discard any pending dead key
     currentState = renameReturnState;
     screenDirty = true;
     return;
   }
 
   if (keyCode == HID_KEY_BACKSPACE) {
+    deadKeyReset();  // dead key + backspace → discard dead key
     if (renameBufferLen > 0) {
       renameBufferLen--;
       renameBuffer[renameBufferLen] = '\0';
@@ -284,12 +302,33 @@ static void handleRenameKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
 
-  // Allow all printable characters in a title (including spaces)
+  // Allow all printable characters in a title (including spaces),
+  // processed through the US-International dead key engine.
   char c = hidToAscii(keyCode, modifiers);
-  if (c != 0 && c >= ' ' && renameBufferLen < MAX_TITLE_LEN - 1) {
-    renameBuffer[renameBufferLen++] = c;
-    renameBuffer[renameBufferLen] = '\0';
-    screenDirty = true;
+  if (c != 0 && c >= ' ') {
+    const char* composed = deadKeyProcess(c);
+    if (composed == nullptr) {
+      // Normal character
+      if (renameBufferLen < MAX_TITLE_LEN - 1) {
+        renameBuffer[renameBufferLen++] = c;
+        renameBuffer[renameBufferLen] = '\0';
+        screenDirty = true;
+      }
+    } else if (composed[0] != '\0') {
+      // Composed UTF-8 string (1–3 bytes typically): copy each byte
+      for (const char* p = composed; *p != '\0' && renameBufferLen < MAX_TITLE_LEN - 1; p++) {
+        renameBuffer[renameBufferLen++] = *p;
+      }
+      renameBuffer[renameBufferLen] = '\0';
+      screenDirty = true;
+      // If a non-composable char was requeued, insert it too
+      char req = deadKeyTakeRequeue();
+      if (req != 0 && req >= ' ' && renameBufferLen < MAX_TITLE_LEN - 1) {
+        renameBuffer[renameBufferLen++] = req;
+        renameBuffer[renameBufferLen] = '\0';
+      }
+    }
+    // else: dead key stored, nothing to insert yet
   }
 }
 
