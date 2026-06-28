@@ -1,3 +1,11 @@
+# MicroSlate US-International keyboard version
+
+Everything you had on MicroSlate 2.0.3, updated to use dead keys to emulate the US-International keyboard layout as used by Microsoft Windows. I just needed to use accented characters. Also updated backspace behavior to correct garbage when deleting UTF-8 characters introduced with this update.
+
+As I made this modification after Crosspoint 1.4.0 has been released, also modified to include that upgrade on dual boot.
+
+Everything else is exactly as it were on MicroSlate 2.0.3 described below. 
+
 # MicroSlate
 
 A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with any **Bluetooth LE (BLE)** keyboard and saves notes to MicroSD.
