@@ -181,12 +181,17 @@ void editorInsertUtf8(const char* utf8str) {
 
 // UTF-8 helpers for deletion
 // Returns the number of bytes of the codepoint that *ends* at position `pos-1`.
+//
+// FIX: a versão original testava textBuffer[pos - len - 1], pulando o byte
+// imediatamente anterior e nunca detectando bytes de continuação (10xxxxxx).
+// A correção testa textBuffer[pos - len], recuando corretamente sobre todos
+// os bytes de continuação antes de parar no lead byte.
 static int utf8BackLen(int pos) {
   if (pos <= 0) return 0;
   int len = 1;
-  // Walk back over continuation bytes (10xxxxxx = 0x80..0xBF)
-  while (len < 4 && pos - len > 0 &&
-         (static_cast<unsigned char>(textBuffer[pos - len - 1]) & 0xC0) == 0x80) {
+  // Recua sobre bytes de continuação (10xxxxxx = 0x80..0xBF)
+  while (len < 4 && (pos - len) > 0 &&
+         (static_cast<unsigned char>(textBuffer[pos - len]) & 0xC0) == 0x80) {
     len++;
   }
   return len;
