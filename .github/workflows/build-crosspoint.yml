@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       crosspoint_tag:
-        description: 'Tag do CrossPoint a compilar (ex: 1.4.0)'
+        description: 'Tag do CrossPoint a compilar (ex: 1.4.1)'
         required: true
-        default: '1.4.0'
+        default: '1.4.1'
 
 permissions:
   contents: write
