@@ -58,6 +58,15 @@ jobs:
             0xe000  "$BOOT_APP0" \
             0x10000 .pio/build/xteink_x3_x4/firmware.bin
 
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microslate-firmware-${{ github.run_number }}
+          path: |
+            microslate-usi-slot-only-*.bin
+            microslate-usi-full-*.bin
+          retention-days: 14
+
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
