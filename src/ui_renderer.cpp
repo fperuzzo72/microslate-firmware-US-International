@@ -182,11 +182,25 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   // Menu items (base + dynamically detected OTA apps)
   static const char* baseMenuItems[] = {"Browse Files", "New Note", "Settings", "Sync"};
   int menuCount = 4 + otaAppCount;
-  for (int i = 0; i < menuCount; i++) {
-    int yPos = 90 + (i * 45);
+
+  // lineH covers FONT_UI's full glyph extent (ascender+descender, ~35px)
+  // with margin, so the selection bar never clips the bottom of descenders
+  // (g/y/p/q) — same formula used by every list in this file.
+  int lineH = renderer.getLineHeight(FONT_UI) + 8;
+  int listTop = 90;
+  constexpr int footerReserve = 100;  // keep list from drawing into the footer
+  int maxVisible = (sh - listTop - footerReserve) / lineH;
+  if (maxVisible < 1) maxVisible = 1;
+  int startIdx = 0;
+  if (menuCount > maxVisible && mainMenuSelection >= maxVisible) {
+    startIdx = mainMenuSelection - maxVisible + 1;
+  }
+
+  for (int i = startIdx; i < menuCount && (i - startIdx) < maxVisible; i++) {
+    int yPos = listTop + ((i - startIdx) * lineH);
     const char* label = (i < 4) ? baseMenuItems[i] : otaApps[i - 4].name;
     if (i == mainMenuSelection) {
-      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 35, tc);
+      clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 2, tc);
       drawClippedText(renderer, FONT_UI, 20, yPos, label, sw - 40, !tc);
     } else {
       drawClippedText(renderer, FONT_UI, 20, yPos, label, sw - 40, tc);
@@ -219,7 +233,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
 
   int fc = getFileCount();
-  int lineH = 30;
+  int lineH = renderer.getLineHeight(FONT_UI) + 8;
   int listTop = 42;
   int footerH = 28;  // one line of FONT_SMALL with safe bottom margin
   int maxVisible = (sh - listTop - footerH) / lineH;
@@ -238,7 +252,7 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
     int yPos = listTop + (i - startIdx) * lineH;
 
     if (i == selectedFileIndex) {
-      clippedFillRect(renderer, 5, yPos - 3, sw - 10, lineH - 1, tc);
+      clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 2, tc);
       drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30, !tc);
     } else {
       drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30, tc);
@@ -512,8 +526,12 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   };
   const int SETTINGS_COUNT = 6;
 
-  // Compute line height to fit all items — use smaller spacing if needed
-  int lineH = 38;
+  // Compute line height to fit all items — use smaller spacing if needed.
+  // Default matches FONT_UI's real glyph extent (ascender+descender) with
+  // margin; only shrinks below that on unusually short screens, in which
+  // case the selection bar fills as much of the row as it can rather than
+  // clipping by a fixed, possibly-wrong amount.
+  int lineH = renderer.getLineHeight(FONT_UI) + 8;
   int listTop = 50;
   if (listTop + SETTINGS_COUNT * lineH > sh - 70) {
     lineH = (sh - 70 - listTop) / SETTINGS_COUNT;
@@ -525,7 +543,7 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     bool sel = (i == settingsSelection);
 
     if (sel) {
-      clippedFillRect(renderer, 5, yPos - 5, sw - 10, lineH - 6, !darkMode);
+      clippedFillRect(renderer, 5, yPos - 3, sw - 10, lineH - 3, !darkMode);
       drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, darkMode);
     } else {
       drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, !darkMode);
@@ -645,8 +663,15 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     snprintf(headerStr, sizeof(headerStr), "Available devices: %d", deviceCount);
     drawClippedText(renderer, FONT_SMALL, 10, 70, headerStr, 0, tc, EpdFontFamily::BOLD);
 
-    // Show up to 10 devices (pagination via scrolling)
-    int maxDevicesToShow = 10;
+    // Show as many devices as fit — lineH covers FONT_UI's full glyph
+    // extent (ascender+descender, ~35px) with margin, so the selection
+    // highlight never clips the bottom of descenders (g/y/p/q). Same
+    // formula used by every list in this file.
+    int listTop = 90;
+    int lineH = renderer.getLineHeight(FONT_UI) + 8;
+    int footerZone = 100;  // keep in sync with the "yPos > sh - 100" check below
+    int maxDevicesToShow = (sh - listTop - footerZone) / lineH;
+    if (maxDevicesToShow < 1) maxDevicesToShow = 1;
     int startIndex = 0;
     if (bluetoothDeviceSelection >= maxDevicesToShow) {
       startIndex = bluetoothDeviceSelection - maxDevicesToShow + 1;
@@ -656,10 +681,10 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
     for (int i = 0; i < devicesToShow; i++) {
       int deviceIndex = startIndex + i;
-      int yPos = 90 + (i * 30);
+      int yPos = listTop + (i * lineH);
 
       // Stop drawing if we'd go into the footer zone
-      if (yPos > sh - 100) break;
+      if (yPos > sh - footerZone) break;
 
       bool isSelected = (bluetoothDeviceSelection == deviceIndex);
       bool isConnected = (getCurrentDeviceAddress() == devices[deviceIndex].address);
@@ -672,7 +697,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       int nameMaxW = sw - 100;
 
       if (isSelected || isConnected) {
-        clippedFillRect(renderer, 5, yPos - 5, sw - 10, 25, tc);
+        clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 2, tc);
         drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW, !tc);
       } else {
         drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW, tc);
@@ -690,8 +715,8 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       int pageNum = (bluetoothDeviceSelection / maxDevicesToShow) + 1;
       int totalPages = (deviceCount + maxDevicesToShow - 1) / maxDevicesToShow;
       snprintf(navHint, sizeof(navHint), "Page %d/%d", pageNum, totalPages);
-      int navY = 90 + (devicesToShow * 30);
-      if (navY < sh - 100)
+      int navY = listTop + (devicesToShow * lineH);
+      if (navY < sh - footerZone)
         drawClippedText(renderer, FONT_SMALL, 15, navY, navHint, 0, tc);
     }
   } else {
@@ -728,19 +753,29 @@ void drawPairedKeyboardsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     drawClippedText(renderer, FONT_SMALL, 20, 85, "Go to Bluetooth to scan and connect", 0, tc);
   } else {
     std::string currentAddr = getCurrentDeviceAddress();
-    int lineH = 38;
+    // lineH covers FONT_UI's full glyph extent (ascender+descender) with
+    // margin — same formula used by every list in this file.
+    int lineH = renderer.getLineHeight(FONT_UI) + 8;
     int listTop = 44;
+    constexpr int bm = 52;
+    int footerZone = bm + 8;  // keep list from drawing into the footer below
+    int maxVisible = (sh - listTop - footerZone) / lineH;
+    if (maxVisible < 1) maxVisible = 1;
+    int startIdx = 0;
+    if (count > maxVisible && pairedKeyboardSelection >= maxVisible) {
+      startIdx = pairedKeyboardSelection - maxVisible + 1;
+    }
 
-    for (int i = 0; i < count; i++) {
+    for (int i = startIdx; i < count && (i - startIdx) < maxVisible; i++) {
       std::string addr, name; uint8_t addrType;
       getPairedKeyboard(i, addr, name, addrType);
 
-      int yPos = listTop + (i * lineH);
+      int yPos = listTop + ((i - startIdx) * lineH);
       bool sel = (i == pairedKeyboardSelection);
       bool active = (!currentAddr.empty() && currentAddr == addr);
 
       if (sel) {
-        clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 4, tc);
+        clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 2, tc);
         drawClippedText(renderer, FONT_UI, 15, yPos, name.c_str(), sw - 90, !tc);
       } else {
         drawClippedText(renderer, FONT_UI, 15, yPos, name.c_str(), sw - 90, tc);
@@ -811,7 +846,7 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       } else {
         drawClippedText(renderer, FONT_SMALL, 10, 38, "Select network:", 0, tc);
 
-        int lineH = 28;
+        int lineH = renderer.getLineHeight(FONT_UI) + 8;
         int listTop = 56;
         int footerH = 28;
         int maxVisible = (sh - listTop - footerH) / lineH;
@@ -832,7 +867,7 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
                    getNetworkSSID(i));
 
           if (isSel) {
-            clippedFillRect(renderer, 5, yPos - 3, sw - 10, lineH - 2, tc);
+            clippedFillRect(renderer, 5, yPos - 4, sw - 10, lineH - 2, tc);
             drawClippedText(renderer, FONT_UI, 15, yPos, label, sw - 50, !tc);
             drawSignalBars(renderer, sw - 30, yPos, getNetworkRSSI(i), !tc);
           } else {
@@ -912,7 +947,8 @@ void drawSyncScreen(GfxRenderer& renderer, HalGPIO& gpio) {
       }
 
       // Display with auto-scroll: keep last [x] + next [-] in view
-      constexpr int lineH   = 22;
+      // FONT_SMALL's real line spacing (advanceY) is 24px — 22 was 2px short.
+      const int lineH = renderer.getLineHeight(FONT_SMALL) + 2;
       constexpr int listTop = 62;
       constexpr int footerH = 32;
       int maxVisible = (sh - listTop - footerH) / lineH;
