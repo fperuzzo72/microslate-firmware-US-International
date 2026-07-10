@@ -5,6 +5,7 @@
 #include <esp_pm.h>
 #include <esp_ota_ops.h>
 #include <esp_app_format.h>
+#include "OtaBootSwitch.h"
 #include <Preferences.h>
 #include "sd_backup.h"
 
@@ -132,7 +133,14 @@ void switchToOtaApp(int index) {
     return;
   }
   DBG_PRINTF("[OTA] Switching to \"%s\" (subtype %d)...\n", otaApps[index].name, subtype);
-  esp_ota_set_boot_partition(target);
+  // esp_ota_set_boot_partition() fails on the X4/X3 with a bogus efuse-blk-rev
+  // verify error (same issue documented in CrossInk's OtaBootSwitch.h). We
+  // write the otadata selection directly instead, matching what the web
+  // flasher and CrossInk itself do.
+  if (!ota_boot::switchTo(target)) {
+    DBG_PRINTF("[OTA] switchTo failed, staying on current app\n");
+    return;
+  }
   esp_restart();
 }
 

@@ -1,0 +1,522 @@
+name: Build CrossInk Dual-Boot
+
+on:
+  workflow_dispatch:
+    inputs:
+      crossink_tag:
+        description: 'Tag do CrossInk a compilar (ex: v1.3.4)'
+        required: true
+        default: 'v1.3.4'
+      build_variant:
+        description: 'Variante de fonte do CrossInk'
+        required: true
+        default: 'tiny'
+        type: choice
+        options:
+          - tiny
+          - teensy
+          - xlarge
+
+permissions:
+  contents: write
+
+jobs:
+  build-crossink:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout MicroSlate fork
+        uses: actions/checkout@v4
+        with:
+          path: microslate
+
+      - name: Checkout CrossInk na tag especificada
+        uses: actions/checkout@v4
+        with:
+          repository: uxjulia/CrossInk
+          ref: ${{ github.event.inputs.crossink_tag }}
+          submodules: recursive
+          path: crossink
+
+      # -----------------------------------------------------------------------
+      # Patch 1: OtaApps.h — arquivo novo, sem conflito.
+      # Reaproveita o CrossInk's src/network/OtaBootSwitch.h, que já contorna
+      # o bug de esp_image_verify (efuse-blk-rev) do esp_ota_set_boot_partition
+      # nesse hardware — não precisamos reescrever essa parte.
+      # -----------------------------------------------------------------------
+      - name: "Patch 1/5 — Criar OtaApps.h"
+        run: |
+          cat > crossink/src/OtaApps.h << 'EOF'
+          #pragma once
+          #include <esp_ota_ops.h>
+          #include <Preferences.h>
+          #include "network/OtaBootSwitch.h"
+
+          static constexpr int MAX_OTA_APPS = 4;
+
+          struct OtaAppEntry {
+            char name[32];
+            int  partitionSubtype;
+          };
+
+          // Grava o nome deste app no NVS, indexado pelo slot OTA em que está rodando.
+          inline void registerOtaAppName(const char* name) {
+            const esp_partition_t* self = esp_ota_get_running_partition();
+            if (!self) return;
+            int slot = self->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0;
+            char key[8];
+            snprintf(key, sizeof(key), "ota_%d", slot);
+            Preferences prefs;
+            prefs.begin("ota_names", false);
+            prefs.putString(key, name);
+            prefs.end();
+          }
+
+          // Varre todos os slots OTA exceto o corrente e preenche `apps[]`.
+          // Retorna o número de apps encontrados.
+          inline int detectOtaApps(OtaAppEntry* apps, int maxApps) {
+            int count = 0;
+            const esp_partition_t* running = esp_ota_get_running_partition();
+            Preferences prefs;
+            prefs.begin("ota_names", true);
+            esp_partition_iterator_t it = esp_partition_find(
+                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, NULL);
+            while (it && count < maxApps) {
+              const esp_partition_t* p = esp_partition_get(it);
+              if (p && p != running
+                     && p->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_0
+                     && p->subtype <= ESP_PARTITION_SUBTYPE_APP_OTA_15) {
+                esp_app_desc_t desc;
+                if (esp_ota_get_partition_description(p, &desc) == ESP_OK) {
+                  int slot = p->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0;
+                  char key[8];
+                  snprintf(key, sizeof(key), "ota_%d", slot);
+                  String nvsName = prefs.getString(key, "");
+                  OtaAppEntry& e = apps[count];
+                  if (nvsName.length() > 0)
+                    strncpy(e.name, nvsName.c_str(), sizeof(e.name) - 1);
+                  else
+                    snprintf(e.name, sizeof(e.name), "OTA Slot %d", slot);
+                  e.name[sizeof(e.name) - 1] = '\0';
+                  e.partitionSubtype = p->subtype;
+                  count++;
+                }
+              }
+              it = esp_partition_next(it);
+            }
+            esp_partition_iterator_release(it);
+            prefs.end();
+            return count;
+          }
+
+          // Troca o boot partition para `subtype` e reinicia. Usa ota_boot::switchTo
+          // (grava direto no otadata) em vez de esp_ota_set_boot_partition, que falha
+          // nesse hardware com um erro de verificação de efuse-blk-rev.
+          inline void switchToOtaApp(int subtype) {
+            const esp_partition_t* target = esp_partition_find_first(
+                ESP_PARTITION_TYPE_APP,
+                static_cast<esp_partition_subtype_t>(subtype), NULL);
+            if (!target) return;
+            if (ota_boot::switchTo(target)) {
+              esp_restart();
+            }
+          }
+          EOF
+
+      # -----------------------------------------------------------------------
+      # Patch 2: HomeActivity.h — include + dois campos novos
+      # -----------------------------------------------------------------------
+      - name: "Patch 2/5 — HomeActivity.h"
+        run: |
+          python3 - << 'PYEOF'
+          path = "crossink/src/activities/home/HomeActivity.h"
+          src = open(path).read()
+
+          src = src.replace(
+              '#include "./FileBrowserActivity.h"',
+              '#include "./FileBrowserActivity.h"\n#include "OtaApps.h"'
+          )
+
+          src = src.replace(
+              '  ButtonNavigator buttonNavigator;',
+              '  ButtonNavigator buttonNavigator;\n  OtaAppEntry otaApps[MAX_OTA_APPS] = {};\n  int otaAppCount = 0;'
+          )
+
+          open(path, 'w').write(src)
+          print("HomeActivity.h: OK")
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # Patch 3: HomeActivity.cpp
+      #
+      # O menu do CrossInk é montado dinamicamente (HomeMenuEntries, capacidade
+      # fixa de 8) e é reconstruído em ~8 pontos diferentes do arquivo (tema
+      # cheio, tema carrossel, tema minimal, contagem de itens...). Em vez de
+      # alterar a assinatura das 3 funções builder e todos os call sites (frágil
+      # para um patch automatizado), usamos um ponteiro de escopo de arquivo
+      # (g_otaApps/g_otaAppCount) preenchido em onEnter() e lido dentro das duas
+      # funções builder compartilhadas (appendHomeMenuItems e
+      # buildMinimalMenuItems) — todos os 8 call sites passam a incluir os itens
+      # OTA automaticamente, sem precisar tocar neles.
+      # -----------------------------------------------------------------------
+      - name: "Patch 3/5 — HomeActivity.cpp"
+        run: |
+          python3 - << 'PYEOF'
+          path = "crossink/src/activities/home/HomeActivity.cpp"
+          src = open(path).read()
+
+          # 3a. Ponteiro de escopo de arquivo para os apps OTA detectados,
+          #     inserido logo após o enum HomeMenuAction.
+          old_enum = '''enum class HomeMenuAction {
+            BrowseFiles,
+            ContinueReading,
+            RecentBooks,
+            OpdsBrowser,
+            ReadingStats,
+            Bookmarks,
+            FileTransfer,
+            Settings,
+          };'''
+          # normaliza indentação (o arquivo real usa 2 espaços)
+          old_enum = '''enum class HomeMenuAction {
+  BrowseFiles,
+  ContinueReading,
+  RecentBooks,
+  OpdsBrowser,
+  ReadingStats,
+  Bookmarks,
+  FileTransfer,
+  Settings,
+};'''
+          new_enum = '''enum class HomeMenuAction {
+  BrowseFiles,
+  ContinueReading,
+  RecentBooks,
+  OpdsBrowser,
+  ReadingStats,
+  Bookmarks,
+  FileTransfer,
+  Settings,
+  OtaApp,
+};
+
+// Preenchido por HomeActivity::onEnter() a cada entrada na Home. Lido pelas
+// funções builder abaixo para anexar entradas de apps OTA irmãos (MicroSlate)
+// ao menu, sem precisar mudar a assinatura das builder functions nem os ~8
+// call sites que as usam.
+const OtaAppEntry* g_otaApps = nullptr;
+int g_otaAppCount = 0;'''
+          assert old_enum in src, "enum HomeMenuAction not found"
+          src = src.replace(old_enum, new_enum)
+
+          # 3b. Campo otaIndex na struct HomeMenuEntry (default -1: não é um app OTA)
+          old_struct = '''struct HomeMenuEntry {
+  const char* label;
+  UIIcon icon;
+  HomeMenuAction action;
+};'''
+          new_struct = '''struct HomeMenuEntry {
+  const char* label;
+  UIIcon icon;
+  HomeMenuAction action;
+  int otaIndex = -1;  // índice em g_otaApps[], válido apenas quando action == OtaApp
+};'''
+          assert old_struct in src, "struct HomeMenuEntry not found"
+          src = src.replace(old_struct, new_struct)
+
+          # 3c. Capacidade do array de menu: 8 fixos + até MAX_OTA_APPS extras
+          src = src.replace(
+              'static constexpr int kCapacity = 8;',
+              'static constexpr int kCapacity = 8 + MAX_OTA_APPS;'
+          )
+
+          # 3d. appendHomeMenuItems: usado por buildHomeMenuItems E
+          #     buildSelectableHomeMenuItems — cobre o menu "cheio" (temas
+          #     clássico e carrossel) em todos os pontos onde é chamado.
+          old_append_end = '''  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
+}'''
+          new_append_end = '''  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  items.push({tr(STR_SETTINGS_TITLE), Settings, HomeMenuAction::Settings});
+
+  for (int i = 0; i < g_otaAppCount; i++) {
+    items.push({g_otaApps[i].name, Text, HomeMenuAction::OtaApp, i});
+  }
+}'''
+          assert old_append_end in src, "appendHomeMenuItems end not found"
+          src = src.replace(old_append_end, new_append_end)
+
+          # 3e. buildMinimalMenuItems: cobre o tema minimal separadamente,
+          #     já que ele não passa por appendHomeMenuItems.
+          old_minimal_end = '''  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+  return items;
+}'''
+          new_minimal_end = '''  items.push({tr(STR_FILE_TRANSFER), Transfer, HomeMenuAction::FileTransfer});
+
+  for (int i = 0; i < g_otaAppCount; i++) {
+    items.push({g_otaApps[i].name, Text, HomeMenuAction::OtaApp, i});
+  }
+
+  return items;
+}'''
+          assert old_minimal_end in src, "buildMinimalMenuItems end not found"
+          src = src.replace(old_minimal_end, new_minimal_end)
+
+          # 3f. getMenuItemCount(): usado para navegação/paginação no tema
+          #     carrossel, é calculado à parte (não usa as builder functions).
+          old_count = '''  if (hasBookmarks || hasClippings) {
+    count++;
+  }
+  return count;
+}'''
+          new_count = '''  if (hasBookmarks || hasClippings) {
+    count++;
+  }
+  count += otaAppCount;
+  return count;
+}'''
+          assert old_count in src, "getMenuItemCount tail not found"
+          src = src.replace(old_count, new_count)
+
+          # 3g. onEnter(): detectar apps OTA e publicar no ponteiro de escopo
+          #     de arquivo, logo após hasOpdsServers ser calculado.
+          old_enter = '  hasOpdsServers = OPDS_STORE.hasServers();'
+          new_enter = ('  hasOpdsServers = OPDS_STORE.hasServers();\n'
+                       '  otaAppCount = detectOtaApps(otaApps, MAX_OTA_APPS);\n'
+                       '  g_otaApps = otaApps;\n'
+                       '  g_otaAppCount = otaAppCount;')
+          assert old_enter in src, "onEnter hasOpdsServers line not found"
+          src = src.replace(old_enter, new_enter, 1)  # só a primeira ocorrência (onEnter)
+
+          # 3h. Dispatch — menu minimal (switch dentro de minimalMenuOpen)
+          old_switch_minimal = '''          case HomeMenuAction::FileTransfer:
+            onFileTransferOpen();
+            break;
+          case HomeMenuAction::ContinueReading:
+          case HomeMenuAction::Settings:
+            break;
+        }'''
+          new_switch_minimal = '''          case HomeMenuAction::FileTransfer:
+            onFileTransferOpen();
+            break;
+          case HomeMenuAction::OtaApp:
+            switchToOtaApp(otaApps[menuItems[minimalMenuIndex].otaIndex].partitionSubtype);
+            break;
+          case HomeMenuAction::ContinueReading:
+          case HomeMenuAction::Settings:
+            break;
+        }'''
+          assert old_switch_minimal in src, "minimal menu switch not found"
+          src = src.replace(old_switch_minimal, new_switch_minimal)
+
+          # 3i. Dispatch — menu cheio (switch dentro do Confirm handler principal)
+          old_switch_full = '''      case HomeMenuAction::FileTransfer:
+        onFileTransferOpen();
+        break;
+      case HomeMenuAction::Settings:
+        onSettingsOpen();
+        break;
+    }
+  }
+}'''
+          new_switch_full = '''      case HomeMenuAction::FileTransfer:
+        onFileTransferOpen();
+        break;
+      case HomeMenuAction::Settings:
+        onSettingsOpen();
+        break;
+      case HomeMenuAction::OtaApp:
+        switchToOtaApp(otaApps[menuItems[menuSelectedIndex].otaIndex].partitionSubtype);
+        break;
+    }
+  }
+}'''
+          assert old_switch_full in src, "full menu switch not found"
+          src = src.replace(old_switch_full, new_switch_full)
+
+          open(path, 'w').write(src)
+          print("HomeActivity.cpp: OK")
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # Patch 4: main.cpp — include + registerOtaAppName
+      # -----------------------------------------------------------------------
+      - name: "Patch 4/5 — main.cpp"
+        run: |
+          python3 - << 'PYEOF'
+          path = "crossink/src/main.cpp"
+          src = open(path).read()
+
+          src = src.replace(
+              '#include <HalGPIO.h>',
+              '#include <HalGPIO.h>\n#include "OtaApps.h"',
+              1
+          )
+
+          src = src.replace(
+              '  gpio.begin();\n  powerManager.begin();',
+              '  gpio.begin();\n  registerOtaAppName("CrossInk");\n  powerManager.begin();'
+          )
+
+          open(path, 'w').write(src)
+          print("main.cpp: OK")
+          PYEOF
+
+      # -----------------------------------------------------------------------
+      # Verificação
+      # -----------------------------------------------------------------------
+      - name: "Patch 5/5 — Verificar"
+        run: |
+          set -e
+          grep -q "g_otaAppCount" crossink/src/activities/home/HomeActivity.cpp \
+            && echo "✅ HomeActivity.cpp: g_otaAppCount presente"
+          grep -q "HomeMenuAction::OtaApp" crossink/src/activities/home/HomeActivity.cpp \
+            && echo "✅ HomeActivity.cpp: OtaApp presente no enum e nos switches"
+          grep -q "OtaApps.h" crossink/src/activities/home/HomeActivity.h \
+            && echo "✅ HomeActivity.h: include OK"
+          grep -q "registerOtaAppName" crossink/src/main.cpp \
+            && echo "✅ main.cpp: registerOtaAppName presente"
+          test -f crossink/src/OtaApps.h \
+            && echo "✅ OtaApps.h: arquivo presente"
+
+      # -----------------------------------------------------------------------
+      # Build — CrossInk
+      # -----------------------------------------------------------------------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar PlatformIO
+        run: pip install platformio esptool
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-crossink-${{ github.event.inputs.crossink_tag }}-${{ hashFiles('crossink/platformio.ini') }}
+          restore-keys: pio-crossink-
+
+      - name: Compilar CrossInk com dual-boot
+        working-directory: crossink
+        run: pio run -e ${{ github.event.inputs.build_variant }}
+
+      # -----------------------------------------------------------------------
+      # Build — MicroSlate (padrão desse repo, com o fix do OtaBootSwitch)
+      # -----------------------------------------------------------------------
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            microslate/.pio/build
+          key: pio-microslate-${{ hashFiles('microslate/platformio.ini', 'microslate/sdkconfig.defaults') }}
+          restore-keys: pio-microslate-
+
+      - name: Compilar MicroSlate
+        working-directory: microslate
+        run: pio run
+
+      # -----------------------------------------------------------------------
+      # Montar binários
+      # -----------------------------------------------------------------------
+      - name: Montar binários
+        run: |
+          BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
+          TAG=${{ github.event.inputs.crossink_tag }}
+          VARIANT=${{ github.event.inputs.build_variant }}
+
+          CI_FW=crossink/.pio/build/${VARIANT}/firmware.bin
+          CI_BOOT=crossink/.pio/build/${VARIANT}/bootloader.bin
+          CI_PART=crossink/.pio/build/${VARIANT}/partitions.bin
+          MS_FW=microslate/.pio/build/xteink_x4/firmware.bin
+          MS_BOOT=microslate/.pio/build/xteink_x4/bootloader.bin
+          MS_PART=microslate/.pio/build/xteink_x4/partitions.bin
+
+          # 1) CrossInk standalone — instalação do zero, sem MicroSlate
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode dio --flash_size 16MB \
+            -o crossink-${TAG}-${VARIANT}-standalone-full.bin \
+            0x0     "$CI_BOOT" \
+            0x8000  "$CI_PART" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$CI_FW"
+
+          # 2) MicroSlate standalone — instalação do zero, sem CrossInk
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode dio --flash_size 16MB \
+            -o microslate-standalone-full.bin \
+            0x0     "$MS_BOOT" \
+            0x8000  "$MS_PART" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$MS_FW"
+
+          # 3) Dual-boot completo em um único arquivo — CrossInk no app0 (boot
+          #    padrão, 0x10000) + MicroSlate no app1 (0x650000)
+          esptool.py --chip esp32c3 merge_bin \
+            --flash_mode dio --flash_size 16MB \
+            -o dualboot-crossink-${TAG}-${VARIANT}-microslate-full.bin \
+            0x0     "$CI_BOOT" \
+            0x8000  "$CI_PART" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$CI_FW" \
+            0x650000 "$MS_FW"
+
+          # 4) Slot-only — para quem já tem dual-boot e quer atualizar só o CrossInk
+          cp "$CI_FW" crossink-${TAG}-${VARIANT}-dualboot-slot-only.bin
+
+          # 5) Slot-only — para quem já tem dual-boot e quer atualizar só o MicroSlate
+          cp "$MS_FW" microslate-dualboot-slot-only.bin
+
+      # -----------------------------------------------------------------------
+      # Publicar release
+      # -----------------------------------------------------------------------
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-dualboot
+          name: "CrossInk ${{ github.event.inputs.crossink_tag }} (${{ github.event.inputs.build_variant }}) + MicroSlate Dual-Boot"
+          files: |
+            crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-standalone-full.bin
+            microslate-standalone-full.bin
+            dualboot-crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-microslate-full.bin
+            crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-dualboot-slot-only.bin
+            microslate-dualboot-slot-only.bin
+          body: |
+            ## CrossInk ${{ github.event.inputs.crossink_tag }} (${{ github.event.inputs.build_variant }}) + MicroSlate — Dual-Boot
+
+            Compilado a partir do [CrossInk](https://github.com/uxjulia/CrossInk) oficial
+            `${{ github.event.inputs.crossink_tag }}` com patch de dual-boot aplicado
+            automaticamente em CI, mais o MicroSlate deste repositório (com o teclado
+            US-International e o fix de troca de partição via `ota_boot::switchTo`).
+
+            No menu principal do CrossInk aparece uma entrada **MicroSlate**; no menu do
+            MicroSlate aparece uma entrada **CrossInk** — cada uma reinicia no outro app.
+
+            ### Qual arquivo usar?
+
+            | Situação | Arquivo | Endereço |
+            |---|---|---|
+            | Instalação do zero, dual-boot completo (recomendado) | `dualboot-crossink-*-microslate-full.bin` | `0x0` |
+            | Instalação do zero, só CrossInk | `crossink-*-standalone-full.bin` | `0x0` |
+            | Instalação do zero, só MicroSlate | `microslate-standalone-full.bin` | `0x0` |
+            | Já tem dual-boot, atualizar só o CrossInk | `crossink-*-dualboot-slot-only.bin` | `0x10000` |
+            | Já tem dual-boot, atualizar só o MicroSlate | `microslate-dualboot-slot-only.bin` | `0x650000` |
+
+            ### Como gravar (browser)
+
+            Acesse [esp.huhn.me](https://esp.huhn.me) no Chrome/Edge, conecte o X4,
+            selecione o arquivo e informe o endereço correto.
+
+            ### Como gravar (terminal)
+
+            ```bash
+            # Dual-boot completo, do zero
+            esptool.py --chip esp32c3 --port COM5 --baud 460800 \
+              write_flash 0x0 dualboot-crossink-*-microslate-full.bin
+
+            # Atualizar só o CrossInk (dual-boot já instalado)
+            esptool.py --chip esp32c3 --port COM5 --baud 460800 \
+              write_flash 0x10000 crossink-*-dualboot-slot-only.bin
+
+            # Atualizar só o MicroSlate (dual-boot já instalado)
+            esptool.py --chip esp32c3 --port COM5 --baud 460800 \
+              write_flash 0x650000 microslate-dualboot-slot-only.bin
+            ```
