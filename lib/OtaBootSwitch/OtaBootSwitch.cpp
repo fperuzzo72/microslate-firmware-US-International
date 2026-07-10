@@ -1,8 +1,14 @@
 #include "OtaBootSwitch.h"
 
 #include <esp_rom_crc.h>
-#include <spi_flash_mmap.h>
 #include <string.h>
+
+// SPI_FLASH_SEC_SIZE normalmente vem de spi_flash_mmap.h, mas esse header
+// não fica visível para libs comuns do PlatformIO quando o projeto usa
+// framework = arduino, espidf (só para componentes IDF "oficiais"). O
+// tamanho de setor de flash é sempre 0x1000 (4096 bytes) nesse chip, então
+// definimos a constante localmente em vez de depender do header.
+static constexpr size_t SPI_FLASH_SEC_SIZE = 0x1000;
 
 namespace ota_boot {
 
