@@ -3,12 +3,12 @@
 #include <esp_rom_crc.h>
 #include <string.h>
 
-// SPI_FLASH_SEC_SIZE normalmente vem de spi_flash_mmap.h, mas esse header
-// não fica visível para libs comuns do PlatformIO quando o projeto usa
-// framework = arduino, espidf (só para componentes IDF "oficiais"). O
-// tamanho de setor de flash é sempre 0x1000 (4096 bytes) nesse chip, então
-// definimos a constante localmente em vez de depender do header.
-static constexpr size_t SPI_FLASH_SEC_SIZE = 0x1000;
+// O nome SPI_FLASH_SEC_SIZE já existe como macro (#define, vinda de
+// esp_spi_flash.h via esp_partition.h, que OtaBootSwitch.h inclui), então
+// usamos um nome próprio (kFlashSectorSize) para não colidir com o
+// preprocessador. O tamanho de setor de flash é sempre 0x1000 (4096 bytes)
+// nesse chip.
+static constexpr size_t kFlashSectorSize = 0x1000;
 
 namespace ota_boot {
 
@@ -24,13 +24,13 @@ bool switchTo(const esp_partition_t* dest) {
   if (!otadata) {
   return false;
   }
-  if (otadata->size < 2 * SPI_FLASH_SEC_SIZE) {
+  if (otadata->size < 2 * kFlashSectorSize) {
     return false;
   }
 
   SelectEntry slots[2] = {};
   if (esp_partition_read(otadata, 0, &slots[0], sizeof(SelectEntry)) != ESP_OK ||
-      esp_partition_read(otadata, SPI_FLASH_SEC_SIZE, &slots[1], sizeof(SelectEntry)) != ESP_OK) {
+      esp_partition_read(otadata, kFlashSectorSize, &slots[1], sizeof(SelectEntry)) != ESP_OK) {
     return false;
   }
 
@@ -67,9 +67,9 @@ bool switchTo(const esp_partition_t* dest) {
 
   // Write to the OTHER slot (so the bootloader sees a higher seq there).
   const int targetSlot = (activeIdx == 0) ? 1 : 0;
-  const size_t targetOff = static_cast<size_t>(targetSlot) * SPI_FLASH_SEC_SIZE;
+  const size_t targetOff = static_cast<size_t>(targetSlot) * kFlashSectorSize;
 
-  if (esp_partition_erase_range(otadata, targetOff, SPI_FLASH_SEC_SIZE) != ESP_OK) {
+  if (esp_partition_erase_range(otadata, targetOff, kFlashSectorSize) != ESP_OK) {
     return false;
   }
   if (esp_partition_write(otadata, targetOff, &next, sizeof(next)) != ESP_OK) {
