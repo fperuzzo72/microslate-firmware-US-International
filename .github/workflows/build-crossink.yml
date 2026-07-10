@@ -44,6 +44,9 @@ jobs:
       # o YAML deste workflow não precise embutir código Python multi-linha
       # (isso já causou um erro de sintaxe YAML numa versão anterior).
       # -----------------------------------------------------------------------
+      - name: "Patch 0/4 — Fixar versão estável do pioarduino platform"
+        run: python3 microslate/scripts/patch-crossink/00_pin_stable_pioarduino_platform.py
+
       - name: "Patch 1/4 — Criar OtaApps.h"
         run: python3 microslate/scripts/patch-crossink/01_create_otaapps_h.py
 
@@ -62,6 +65,8 @@ jobs:
       - name: Verificar patch
         run: |
           set -e
+          grep -q "55.03.36-1" crossink/platformio.ini \
+            && echo "✅ platformio.ini: versão pinada do pioarduino platform OK"
           grep -q "g_otaAppCount" crossink/src/activities/home/HomeActivity.cpp \
             && echo "✅ HomeActivity.cpp: g_otaAppCount presente"
           grep -q "HomeMenuAction::OtaApp" crossink/src/activities/home/HomeActivity.cpp \
