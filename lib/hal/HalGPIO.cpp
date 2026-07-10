@@ -4,11 +4,21 @@
 #include <esp_sleep.h>
 
 void HalGPIO::begin() {
+  // Must run first and before inputMgr.begin()/pinMode() below: on X4, GPIO0 and
+  // GPIO20 are the battery ADC pin and the USB-detect UART0_RXD pin; on X3 they
+  // are the I2C bus (SDA=20, SCL=0) that this probe uses to fingerprint the
+  // BQ27220/DS3231/QMI8658 chips. selectXteinkDevice() releases the I2C bus and
+  // leaves both pins back in INPUT mode when it's done, so it's safe to
+  // reconfigure them for ADC/UART use immediately after.
+  _deviceType = freeink::selectXteinkDevice() ? DeviceType::X3 : DeviceType::X4;
+
   inputMgr.begin();
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
-  // BAT_GPIO0 is configured for ADC via adc1_config_channel_atten in InputManager::begin()
-  // — do NOT call pinMode() here as it reconfigures the pin as digital input in dual framework
-  pinMode(UART0_RXD, INPUT);
+  if (deviceIsX4()) {
+    // BAT_GPIO0 is configured for ADC via adc1_config_channel_atten in InputManager::begin()
+    // — do NOT call pinMode() here as it reconfigures the pin as digital input in dual framework
+    pinMode(UART0_RXD, INPUT);
+  }
 }
 
 void HalGPIO::update() { inputMgr.update(); }
@@ -38,7 +48,11 @@ void HalGPIO::startDeepSleep() {
 }
 
 int HalGPIO::getBatteryPercentage() const {
-  static const BatteryMonitor battery = BatteryMonitor(BAT_GPIO0);
+  // Default ctor reads BoardConfig::ACTIVE (set by selectXteinkDevice() in
+  // begin()) and picks the right backend at runtime: ADC on BAT_GPIO0 for X4,
+  // the BQ27220 I2C fuel gauge for X3. Do not pass BAT_GPIO0 explicitly here —
+  // that pin is meaningless on X3 (it's the I2C SCL line).
+  static const BatteryMonitor battery = BatteryMonitor();
   static int cachedPct = -1;
   static float smoothedMv = -1.0f;
   static unsigned long lastReadMs = 0;
@@ -106,7 +120,20 @@ int HalGPIO::getBatteryPercentage() const {
 }
 
 bool HalGPIO::isUsbConnected() const {
-  // U0RXD/GPIO20 reads HIGH when USB is connected
+  if (deviceIsX3()) {
+    // X3 has no dedicated USB-detect GPIO — GPIO20 is the I2C SDA line shared
+    // with the BQ27220 gauge, DS3231 RTC, and QMI8658 IMU. Ask the gauge
+    // instead: externalPower reflects the charger IC/gauge's own read of VBUS,
+    // falling back to "is it currently charging" if that field isn't reported.
+    // NOTE: this path has not been validated on real X3 hardware yet — if USB
+    // detection or wake-from-sleep behaves oddly on X3, this is the place to
+    // check first.
+    static const BatteryMonitor battery = BatteryMonitor();
+    const BatteryMonitor::Status status = battery.readStatus();
+    if (status.externalPowerKnown) return status.externalPower;
+    return status.chargingKnown && status.charging;
+  }
+  // X4: U0RXD/GPIO20 reads HIGH when USB is connected
   return digitalRead(UART0_RXD) == HIGH;
 }
 

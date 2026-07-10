@@ -4,6 +4,7 @@
 #include <HalDisplay.h>
 
 #include <map>
+#include <vector>
 
 #include "Bitmap.h"
 
@@ -25,15 +26,26 @@ class GfxRenderer {
 
  private:
   static constexpr size_t BW_BUFFER_CHUNK_SIZE = 8000;  // 8KB chunks to allow for non-contiguous memory
-  static constexpr size_t BW_BUFFER_NUM_CHUNKS = HalDisplay::BUFFER_SIZE / BW_BUFFER_CHUNK_SIZE;
-  static_assert(BW_BUFFER_CHUNK_SIZE * BW_BUFFER_NUM_CHUNKS == HalDisplay::BUFFER_SIZE,
-                "BW buffer chunking does not line up with display buffer size");
 
   HalDisplay& display;
   RenderMode renderMode;
   Orientation orientation;
   bool fadingFix;
-  uint8_t* bwBufferChunks[BW_BUFFER_NUM_CHUNKS] = {nullptr};
+  // Runtime panel geometry — X4 values are just the initializers; begin()
+  // overwrites them with whatever HalDisplay actually detected (X3 or X4).
+  // Do NOT read HalDisplay::DISPLAY_WIDTH/HEIGHT/BUFFER_SIZE directly anywhere
+  // in this class — those are compile-time X4 constants and will silently
+  // give a wrong, undersized buffer on X3 (792x528, larger than X4's
+  // 800x480 once padded to bytes).
+  uint16_t panelWidth = HalDisplay::DISPLAY_WIDTH;
+  uint16_t panelHeight = HalDisplay::DISPLAY_HEIGHT;
+  uint16_t panelWidthBytes = HalDisplay::DISPLAY_WIDTH_BYTES;
+  uint32_t frameBufferSize = HalDisplay::BUFFER_SIZE;
+  // Sized in begin() from the real frameBufferSize once the panel is known;
+  // a fixed-size array can't do this since X3/X4 need a different chunk
+  // count. Chunks are allocated on demand in storeBwBuffer()/freed in
+  // freeBwBufferChunks(), same as before.
+  std::vector<uint8_t*> bwBufferChunks;
   std::map<int, EpdFontFamily> fontMap;
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, const int* y, bool pixelState,
                   EpdFontFamily::Style style) const;
@@ -46,6 +58,12 @@ class GfxRenderer {
   explicit GfxRenderer(HalDisplay& halDisplay)
       : display(halDisplay), renderMode(BW), orientation(Portrait), fadingFix(false) {}
   ~GfxRenderer() { freeBwBufferChunks(); }
+
+  // Must be called once, after display.begin() (i.e. after the X3/X4 panel
+  // has been detected and initialized) and before any drawing/refresh calls.
+  // Reads the real panel geometry from HalDisplay and (re)sizes
+  // bwBufferChunks to match. See main.cpp setup().
+  void begin();
 
   static constexpr int VIEWABLE_MARGIN_TOP = 9;
   static constexpr int VIEWABLE_MARGIN_RIGHT = 3;

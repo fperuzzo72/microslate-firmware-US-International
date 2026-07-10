@@ -193,6 +193,7 @@ void setup() {
 
   gpio.begin();
   display.begin();
+  renderer.begin();  // Sizes bwBufferChunks etc. from the panel gpio.begin() just detected
 
   renderer.setFadingFix(true);  // Power down display analog circuits after each refresh — reduces idle drain
   rendererSetup(renderer);

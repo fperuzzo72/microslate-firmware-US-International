@@ -132,9 +132,9 @@ jobs:
           CI_FW=crossink/.pio/build/${VARIANT}/firmware.bin
           CI_BOOT=crossink/.pio/build/${VARIANT}/bootloader.bin
           CI_PART=crossink/.pio/build/${VARIANT}/partitions.bin
-          MS_FW=microslate/.pio/build/xteink_x4/firmware.bin
-          MS_BOOT=microslate/.pio/build/xteink_x4/bootloader.bin
-          MS_PART=microslate/.pio/build/xteink_x4/partitions.bin
+          MS_FW=microslate/.pio/build/xteink_x3_x4/firmware.bin
+          MS_BOOT=microslate/.pio/build/xteink_x3_x4/bootloader.bin
+          MS_PART=microslate/.pio/build/xteink_x3_x4/partitions.bin
 
           # 1) CrossInk standalone — instalação do zero, sem MicroSlate
           esptool.py --chip esp32c3 merge_bin \

@@ -3,8 +3,9 @@
 #include <Arduino.h>
 #include <BatteryMonitor.h>
 #include <InputManager.h>
+#include <XteinkDetect.h>
 
-// Display SPI pins (custom pins for XteinkX4, not hardware SPI defaults)
+// Display SPI pins (shared by X3 and X4 — same pinout, not hardware SPI defaults)
 #define EPD_SCLK 8   // SPI Clock
 #define EPD_MOSI 10  // SPI MOSI (Master Out Slave In)
 #define EPD_CS 21    // Chip Select
@@ -14,9 +15,12 @@
 
 #define SPI_MISO 7  // SPI MISO, shared between SD card and display (Master In Slave Out)
 
-#define BAT_GPIO0 0  // Battery voltage
-
-#define UART0_RXD 20  // Used for USB connection detection
+// X4-only: GPIO0/GPIO20 are a battery ADC pin and the USB-detect UART0_RXD pin.
+// On X3 the SAME two pins are instead the I2C bus (SDA=20, SCL=0) used to reach
+// the BQ27220 fuel gauge, DS3231 RTC, and QMI8658 IMU — see XteinkDetect.h.
+// Never read these as plain GPIO without checking deviceIsX3() first.
+#define BAT_GPIO0 0   // Battery voltage (X4 only)
+#define UART0_RXD 20  // USB connection detection (X4 only)
 
 class HalGPIO {
 #if CROSSPOINT_EMULATED == 0
@@ -24,7 +28,17 @@ class HalGPIO {
 #endif
 
  public:
+  enum class DeviceType : uint8_t { X4, X3 };
+
+ private:
+  DeviceType _deviceType = DeviceType::X4;
+
+ public:
   HalGPIO() = default;
+
+  // Inline device type helpers for cleaner downstream checks
+  inline bool deviceIsX3() const { return _deviceType == DeviceType::X3; }
+  inline bool deviceIsX4() const { return _deviceType == DeviceType::X4; }
 
   // Start button GPIO and setup SPI for screen and SD card
   void begin();
@@ -60,3 +74,8 @@ class HalGPIO {
   static constexpr uint8_t BTN_DOWN = 5;
   static constexpr uint8_t BTN_POWER = 6;
 };
+
+// Defined in main.cpp. HalDisplay::begin() reads gpio.deviceIsX3() to pick the
+// panel driver, so gpio.begin() must run before display.begin() (it already
+// does — see setup() in main.cpp).
+extern HalGPIO gpio;

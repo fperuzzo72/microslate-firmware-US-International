@@ -20,11 +20,27 @@ class HalDisplay {
   // Initialize the display hardware and driver
   void begin();
 
-  // Display dimensions
+  // Compile-time X4 defaults — kept for static_assert-style checks elsewhere
+  // that still need a constant, but NOT valid for buffer sizing or coordinate
+  // math anymore now that X3 (792x528) shares this binary. Use the runtime
+  // getters below (getDisplayWidth() etc.) for anything that touches an
+  // actual frame buffer or pixel coordinate.
   static constexpr uint16_t DISPLAY_WIDTH = EInkDisplay::DISPLAY_WIDTH;
   static constexpr uint16_t DISPLAY_HEIGHT = EInkDisplay::DISPLAY_HEIGHT;
   static constexpr uint16_t DISPLAY_WIDTH_BYTES = DISPLAY_WIDTH / 8;
   static constexpr uint32_t BUFFER_SIZE = DISPLAY_WIDTH_BYTES * DISPLAY_HEIGHT;
+  // Largest buffer either panel needs (X3's 792x528 is bigger than X4's
+  // 800x480 once padded to bytes) — the only safe constant for fixed-size
+  // scratch allocations that must exist before the device is detected.
+  static constexpr uint32_t MAX_BUFFER_SIZE = EInkDisplay::MAX_BUFFER_SIZE;
+
+  // Runtime geometry — reflects the actual detected panel (X3 or X4) once
+  // begin() has run. Use these, not the constexprs above, for anything
+  // sizing or indexing into the live frame buffer.
+  uint16_t getDisplayWidth() const;
+  uint16_t getDisplayHeight() const;
+  uint16_t getDisplayWidthBytes() const;
+  uint32_t getBufferSize() const;
 
   // Frame buffer operations
   void clearScreen(uint8_t color = 0xFF) const;
