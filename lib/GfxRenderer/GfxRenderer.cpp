@@ -828,7 +828,7 @@ void GfxRenderer::drawTextRotated90CW(const int fontId, const int x, const int y
 
 uint8_t* GfxRenderer::getFrameBuffer() const { return display.getFrameBuffer(); }
 
-size_t GfxRenderer::getBufferSize() { return frameBufferSize; }
+size_t GfxRenderer::getBufferSize() const { return frameBufferSize; }
 
 // unused
 // void GfxRenderer::grayscaleRevert() const { display.grayscaleRevert(); }

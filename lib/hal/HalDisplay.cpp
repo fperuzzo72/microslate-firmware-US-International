@@ -67,7 +67,7 @@ void HalDisplay::beginRefresh(HalDisplay::RefreshMode mode, bool turnOffScreen) 
   einkDisplay.displayBufferAsync(convertRefreshMode(mode));
 }
 
-bool HalDisplay::isRefreshing() const { return einkDisplay.refreshBusy(); }
+bool HalDisplay::isRefreshing() { return einkDisplay.refreshBusy(); }
 
 bool HalDisplay::pollRefresh() { return einkDisplay.refreshBusy(); }
 

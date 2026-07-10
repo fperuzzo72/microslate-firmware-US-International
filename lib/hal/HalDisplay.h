@@ -52,7 +52,7 @@ class HalDisplay {
 
   // Non-blocking refresh API
   void beginRefresh(RefreshMode mode = RefreshMode::FAST_REFRESH, bool turnOffScreen = false);
-  bool isRefreshing() const;
+  bool isRefreshing();
   bool pollRefresh();
 
   // Power management
