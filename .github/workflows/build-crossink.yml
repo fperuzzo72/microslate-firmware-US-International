@@ -103,14 +103,21 @@ jobs:
       # -----------------------------------------------------------------------
       - uses: actions/cache@v4
         with:
-          path: |
-            ~/.platformio
-            microslate/.pio/build
+          path: ~/.platformio
           key: pio-microslate-${{ hashFiles('microslate/platformio.ini', 'microslate/sdkconfig.defaults') }}
           restore-keys: pio-microslate-
 
       - name: Compilar MicroSlate
         working-directory: microslate
+        # IDF_COMPONENT_MANAGER=0 contorna um bug conhecido do
+        # espressif32@6.12.0 (framework arduino+espidf): o Component Manager
+        # tenta descobrir a versão do ESP-IDF via `git describe`, mas o
+        # pacote framework-espidf é instalado como .zip extraído (sem
+        # .git), então a checagem falha com "fatal: not a git repository" e
+        # a resolução da dependência "idf" quebra antes de compilar
+        # qualquer arquivo do projeto. Ver platformio/platform-espressif32#1663.
+        env:
+          IDF_COMPONENT_MANAGER: "0"
         run: pio run
 
       # -----------------------------------------------------------------------
