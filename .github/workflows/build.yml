@@ -1,4 +1,4 @@
-name: Build and Release X3
+name: Build and Release
 
 on:
   push:
