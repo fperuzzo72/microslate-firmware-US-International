@@ -1,0 +1,75 @@
+name: Build All (CrossPoint / CrossInk / MicroSlate)
+
+# Ponto único de disparo — chama, como reusable workflows, cada um dos três
+# arquivos abaixo, de acordo com as caixas marcadas ao rodar manualmente:
+#   - build-crosspoint.yml → CrossPoint + MicroSlate dual-boot
+#                            (e produz, dentro do mesmo pacote, os binários
+#                            standalone de cada um também)
+#   - build-crossink.yml   → CrossInk + MicroSlate dual-boot
+#                            (mesma coisa: standalone de cada um incluído)
+#   - build.yml            → só MicroSlate, sozinho, rápido (sem esperar
+#                            CrossPoint/CrossInk compilarem)
+#
+# Cada job roda em paralelo e publica seus próprios binários como artifact
+# (aba Actions → a execução → Summary → Artifacts), com retenção de 14 dias.
+# Releases do GitHub (com tag) só são criadas quando build-crosspoint.yml ou
+# build-crossink.yml rodam sozinhos (workflow_dispatch direto) — quando
+# chamados daqui, ficam só como artifact, para não gerar duas releases
+# conflitantes no mesmo disparo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      crosspoint_tag:
+        description: 'Tag do CrossPoint (usada nas opções com CrossPoint)'
+        required: true
+        default: '1.4.1'
+      crossink_tag:
+        description: 'Tag do CrossInk (usada nas opções com CrossInk)'
+        required: true
+        default: 'v1.3.4'
+      crossink_variant:
+        description: 'Variante de fonte do CrossInk'
+        required: true
+        default: 'tiny'
+        type: choice
+        options:
+          - tiny
+          - teensy
+          - xlarge
+      build_crosspoint_dualboot:
+        description: 'CrossPoint + MicroSlate (dual-boot)'
+        type: boolean
+        default: true
+      build_crossink_dualboot:
+        description: 'CrossInk + MicroSlate (dual-boot)'
+        type: boolean
+        default: true
+      build_microslate_only:
+        description: 'Só MicroSlate (build rápido, sem CrossPoint/CrossInk)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  crosspoint-dualboot:
+    if: ${{ inputs.build_crosspoint_dualboot }}
+    uses: ./.github/workflows/build-crosspoint.yml
+    with:
+      crosspoint_tag: ${{ inputs.crosspoint_tag }}
+    secrets: inherit
+
+  crossink-dualboot:
+    if: ${{ inputs.build_crossink_dualboot }}
+    uses: ./.github/workflows/build-crossink.yml
+    with:
+      crossink_tag: ${{ inputs.crossink_tag }}
+      build_variant: ${{ inputs.crossink_variant }}
+    secrets: inherit
+
+  microslate-only:
+    if: ${{ inputs.build_microslate_only }}
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
