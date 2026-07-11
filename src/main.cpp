@@ -9,6 +9,8 @@
 #include <Preferences.h>
 #include "sd_backup.h"
 
+#include <cstring>
+
 #include "config.h"
 #include "ble_keyboard.h"
 #include "input_handler.h"
@@ -163,11 +165,17 @@ static void updateScreen() {
     lastOrientation = currentOrientation;
   }
 
-  // Auto-compute chars per line from font metrics so text always fills the screen
+  // Auto-compute chars per line from font metrics so text always fills the screen.
+  // Sample includes spaces, mixed case, digits and punctuation — real typed
+  // text is ~15-20% spaces (much narrower than a letter), so measuring only
+  // "abcdefghijklmnopqrstuvwxyz" overestimated the average character width
+  // and made lines wrap noticeably before the right margin, leaving unused
+  // space. This sample's average is much closer to real prose.
   {
     int sw = renderer.getScreenWidth();
     int textAreaWidth = sw - 20;  // 10px margins each side
-    int avgCharW = renderer.getTextAdvanceX(editorFontId(fontSize), "abcdefghijklmnopqrstuvwxyz") / 26;
+    static const char* avgSample = "The quick brown fox jumps over the lazy dog. 0123456789";
+    int avgCharW = renderer.getTextAdvanceX(editorFontId(fontSize), avgSample) / (int)strlen(avgSample);
     if (avgCharW > 0) charsPerLine = textAreaWidth / avgCharW;
   }
   editorSetCharsPerLine(charsPerLine);
