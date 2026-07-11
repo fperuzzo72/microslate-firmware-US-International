@@ -49,6 +49,15 @@ bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased(); }
 
 unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
 
+void HalGPIO::debugPrintButtonAdc() {
+  InputManager::ButtonAdcSample group1, group2;
+  inputMgr.readButtonAdc(group1, group2);
+  if (Serial) {
+    Serial.printf("[%lu] [BTN-ADC] pin%d=%d (btn=%d)  pin%d=%d (btn=%d)\n", millis(), group1.pin, group1.raw,
+                  group1.button, group2.pin, group2.raw, group2.button);
+  }
+}
+
 void HalGPIO::startDeepSleep() {
   // Ensure that the power button has been released to avoid immediately turning back on if you're holding it
   while (inputMgr.isPressed(BTN_POWER)) {

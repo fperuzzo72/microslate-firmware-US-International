@@ -315,6 +315,26 @@ static void processPhysicalButtons() {
   static bool btnConfirmLast = false;
   static bool btnBackLast = false;
 
+  // Tracks screen transitions. On the first processPhysicalButtons() call
+  // after currentState changes, the button reading can still reflect
+  // whatever was used to CONFIRM that transition (e.g. Enter/Confirm)
+  // mechanically releasing — on this ADC button ladder, a release can
+  // transiently pass through a neighboring button's voltage band before
+  // settling on "nothing pressed" (CrossInk documents this same
+  // InputManager needing up to ~500ms to settle after a transition). Force
+  // every edge-tracker to "true" right after a transition so a residual/
+  // settling read can't be mistaken for a fresh press — this is what was
+  // showing up as an extra step in Settings, or the main menu landing on
+  // the second item right after boot. A real new press still needs an
+  // actual release-then-press to register.
+  static UIState prevButtonState = UIState::MAIN_MENU;
+  const bool justEnteredEditor = (currentState == UIState::TEXT_EDITOR && prevButtonState != UIState::TEXT_EDITOR);
+  const bool justTransitioned = (currentState != prevButtonState);
+  prevButtonState = currentState;
+  if (justTransitioned) {
+    btnUpLast = btnDownLast = btnLeftLast = btnRightLast = btnConfirmLast = btnBackLast = true;
+  }
+
   // Use isPressed() — persistent debounced state.  With one-shot scanning
   // (radio quiet during navigation), InputManager debounce works reliably.
   bool btnUp      = gpio.isPressed(HalGPIO::BTN_UP);
@@ -431,8 +451,25 @@ static void processPhysicalButtons() {
       static uint8_t repeatKey = 0;
       static unsigned long repeatStart = 0;
       static unsigned long lastRepeat = 0;
+      static bool releasedSinceEntry = false;
       const unsigned long REPEAT_DELAY = 400;
       const unsigned long REPEAT_RATE  = 80;
+
+      if (justEnteredEditor) {
+        // The Enter/Confirm press that opened this file can still be
+        // mechanically releasing right as this first frame runs. Confirm
+        // and Right share the same ADC button ladder (see HalGPIO/
+        // InputManager) — CrossInk documents this same library needing up
+        // to ~500ms to settle after a state transition, since a release
+        // can transiently pass through a neighboring button's voltage band
+        // before landing on "nothing pressed". Rather than block with a
+        // delay, require one observed "nothing held" reading before this
+        // repeat logic will trust a held key — that absorbs the glitch
+        // without it ever being able to look like a real held Right/Left/
+        // Up/Down and auto-repeat the cursor.
+        releasedSinceEntry = false;
+        repeatKey = 0;
+      }
 
       auto fireKey = [](uint8_t k) {
         enqueueKeyEvent(k, 0, true);
@@ -445,6 +482,14 @@ static void processPhysicalButtons() {
       else if (btnDown)  heldKey = HID_KEY_DOWN;
       else if (btnLeft)  heldKey = HID_KEY_LEFT;
       else if (btnRight) heldKey = HID_KEY_RIGHT;
+
+      if (!releasedSinceEntry) {
+        if (heldKey == 0) {
+          releasedSinceEntry = true;
+        } else {
+          heldKey = 0;  // ignore until a clean release is observed first
+        }
+      }
 
       if (heldKey != repeatKey) {
         // Key changed — fire immediately on press
@@ -627,6 +672,20 @@ void renderSleepScreen() {
 void loop() {
   // --- GPIO first: always poll buttons before anything else ---
   gpio.update();
+
+  // TEMPORARY DIAGNOSTIC — investigating a X3 report of BTN_RIGHT behaving as
+  // if stuck held (cursor auto-advancing in the editor with no keyboard
+  // connected). Prints raw ADC readings for both button-ladder groups every
+  // 500ms. No-op unless Serial is actually connected (RELEASE_BUILD leaves
+  // Serial never begun, so `if (Serial)` inside is false and this costs
+  // nothing in the normal release binary). Safe to delete once diagnosed.
+  {
+    static unsigned long lastAdcDebug = 0;
+    if (millis() - lastAdcDebug > 500) {
+      gpio.debugPrintButtonAdc();
+      lastAdcDebug = millis();
+    }
+  }
 
   // Control auto-reconnect based on UI state
   static UIState lastState = UIState::MAIN_MENU;

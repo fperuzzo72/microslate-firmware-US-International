@@ -52,6 +52,11 @@ class HalGPIO {
   bool wasAnyReleased() const;
   unsigned long getHeldTime() const;
 
+  // Temporary diagnostic: raw ADC readings + which button (if any) each one
+  // currently maps to, for the two button-ladder groups. See
+  // debugPrintButtonAdc() in HalGPIO.cpp for how this gets used.
+  void debugPrintButtonAdc();
+
   // Setup wake up GPIO and enter deep sleep
   void startDeepSleep();
 
