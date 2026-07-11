@@ -629,6 +629,11 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
   // Passkey display
   uint32_t passkey = getCurrentPasskey();
+  // Where the scan-status / "Searching.../Found:" line (if any) ends — the
+  // device list below must start after this, not at a fixed y=70, or it
+  // draws on top of that text whenever a scan is in progress (which is the
+  // common case, since devices appear *while* still scanning).
+  int scanStatusBottom = 70;
   if (passkey > 0) {
     char passkeyStr[32];
     drawClippedText(renderer, FONT_UI, 20, 100, "PAIRING CODE:", 0, tc, EpdFontFamily::BOLD);
@@ -652,22 +657,26 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     char foundStr[32];
     snprintf(foundStr, sizeof(foundStr), "Found: %d", deviceCount);
     drawClippedText(renderer, FONT_SMALL, sw / 2, 60, foundStr, sw / 2 - 10, tc);
+
+    scanStatusBottom = 60 + renderer.getLineHeight(FONT_SMALL) + 6;
   }
 
-  // Device list
+  // Device list — skipped during passkey entry (that UI owns this screen
+  // area instead), and starts below whatever scan-status text was drawn
+  // above so it never overlaps it.
   int deviceCount = getDiscoveredDeviceCount();
-  if (deviceCount > 0) {
+  if (deviceCount > 0 && passkey == 0) {
     BleDeviceInfo* devices = getDiscoveredDevices();
 
     char headerStr[64];
     snprintf(headerStr, sizeof(headerStr), "Available devices: %d", deviceCount);
-    drawClippedText(renderer, FONT_SMALL, 10, 70, headerStr, 0, tc, EpdFontFamily::BOLD);
+    drawClippedText(renderer, FONT_SMALL, 10, scanStatusBottom, headerStr, 0, tc, EpdFontFamily::BOLD);
 
     // Show as many devices as fit — lineH covers FONT_UI's full glyph
     // extent (ascender+descender, ~35px) with margin, so the selection
     // highlight never clips the bottom of descenders (g/y/p/q). Same
     // formula used by every list in this file.
-    int listTop = 90;
+    int listTop = scanStatusBottom + renderer.getLineHeight(FONT_SMALL) + 6;
     int lineH = renderer.getLineHeight(FONT_UI) + 8;
     int footerZone = 100;  // keep in sync with the "yPos > sh - 100" check below
     int maxDevicesToShow = (sh - listTop - footerZone) / lineH;

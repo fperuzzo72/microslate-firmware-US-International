@@ -125,15 +125,27 @@ bool HalGPIO::isUsbConnected() const {
     // with the BQ27220 gauge, DS3231 RTC, and QMI8658 IMU. Ask the gauge
     // instead: externalPower reflects the charger IC/gauge's own read of VBUS,
     // falling back to "is it currently charging" if that field isn't reported.
-    // NOTE: this path has not been validated on real X3 hardware yet — if USB
-    // detection or wake-from-sleep behaves oddly on X3, this is the place to
-    // check first.
+    //
+    // Cached: this is called from getBatteryPercentage(), which every screen's
+    // drawBattery() calls on every redraw — an uncached I2C transaction here
+    // ran on every single screen update, competing with button-input polling
+    // in the same main loop and occasionally delaying it enough to miss a
+    // quick press. USB/charging state doesn't need per-frame freshness, so
+    // it's re-read at most every 2 seconds.
     static const BatteryMonitor battery = BatteryMonitor();
-    const BatteryMonitor::Status status = battery.readStatus();
-    if (status.externalPowerKnown) return status.externalPower;
-    return status.chargingKnown && status.charging;
+    static bool cachedConnected = false;
+    static unsigned long lastReadMs = 0;
+    const unsigned long now = millis();
+    if (lastReadMs == 0 || (now - lastReadMs) >= 2000) {
+      const BatteryMonitor::Status status = battery.readStatus();
+      cachedConnected = status.externalPowerKnown ? status.externalPower
+                                                    : (status.chargingKnown && status.charging);
+      lastReadMs = now;
+    }
+    return cachedConnected;
   }
-  // X4: U0RXD/GPIO20 reads HIGH when USB is connected
+  // X4: U0RXD/GPIO20 reads HIGH when USB is connected — a plain digitalRead(),
+  // cheap enough to not need caching.
   return digitalRead(UART0_RXD) == HIGH;
 }
 
