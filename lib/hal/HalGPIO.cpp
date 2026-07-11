@@ -93,6 +93,38 @@ int HalGPIO::getBatteryPercentage() const {
 
   const bool usbCharging = isUsbConnected();
 
+  if (deviceIsX3()) {
+    // X3's BQ27220 gauge computes its own state-of-charge in hardware
+    // (real coulomb counting), unlike X4's plain resistor-divider ADC — it
+    // doesn't need the "wait for the ADC to settle after boot" window
+    // below, and feeding its voltage reading through
+    // percentageFromMillivolts() (a polynomial fit calibrated for X4's ADC
+    // path) was producing a stuck ~100% result on X3. Ask the gauge for its
+    // own percentage directly instead.
+    if (cachedPct < 0 || (now - lastReadMs) >= 30000) {
+      uint16_t gaugePct = 0;
+      if (battery.readPercentageChecked(gaugePct)) {
+        int newPct = static_cast<int>(gaugePct);
+        // Same drop rate-limiting as the X4 path below, for a consistent feel.
+        if (cachedPct >= 0) {
+          const int maxDrop = usbCharging ? 20 : 2;
+          if (newPct < cachedPct - maxDrop) newPct = cachedPct - maxDrop;
+        }
+        if (newPct != cachedPct) {
+          Preferences prefs;
+          prefs.begin("battery", false);
+          prefs.putInt("pct", newPct);
+          prefs.end();
+        }
+        cachedPct = newPct;
+      }
+      // On a failed I2C read, keep the last cached value rather than
+      // showing something misleading like 0.
+      lastReadMs = now;
+    }
+    return cachedPct >= 0 ? cachedPct : 0;
+  }
+
   // ADC reads high for ~2 minutes after boot/wake — trust NVS cache during settling.
   // Skip this window when charging: voltage is actively changing and we want real readings.
   if (!adcSettled) {
