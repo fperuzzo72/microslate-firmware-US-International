@@ -116,11 +116,7 @@ void refreshFileList() {
     file.close();
   }
   root.close();
-  // FreeInk's SDCardManager has no sleep()/ensureReady() cycling — its
-  // open()/exists()/mkdir()/remove()/rename() talk to the mounted volume
-  // directly (see freeink-sdk/libs/hardware/SDCardManager). begin() at boot
-  // (see initFileSystem()/setup()) is enough; CrossInk uses the same SDK
-  // this way with no per-operation sleep either.
+  SdMan.sleep();
 
   DBG_PRINTF("File listing: %d files found\n", fileCount);
 }
@@ -154,6 +150,7 @@ void loadFile(const char* filename) {
   editorSetUnsavedChanges(false);
 
   currentState = UIState::TEXT_EDITOR;
+  SdMan.sleep();
   DBG_PRINTF("Loaded: %s (%d bytes)\n", filename, (int)bytesRead);
 }
 
@@ -195,6 +192,7 @@ void saveCurrentFile(bool refreshList) {
 
   editorSetUnsavedChanges(false);
   if (refreshList) refreshFileList();
+  SdMan.sleep();
   DBG_PRINTF("Saved: %s\n", filename);
 }
 
@@ -222,6 +220,7 @@ void updateFileTitle(const char* filename, const char* newTitle) {
   }
 
   refreshFileList();
+  SdMan.sleep();
 }
 
 void deleteFile(const char* filename) {
@@ -231,5 +230,6 @@ void deleteFile(const char* filename) {
   SdMan.remove(path);
   SdMan.remove(bakPath);
   refreshFileList();
+  SdMan.sleep();
   DBG_PRINTF("Deleted: %s\n", filename);
 }

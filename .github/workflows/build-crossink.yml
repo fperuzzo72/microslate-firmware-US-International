@@ -16,16 +16,6 @@ on:
           - tiny
           - teensy
           - xlarge
-  workflow_call:
-    inputs:
-      crossink_tag:
-        type: string
-        required: true
-        default: 'v1.3.4'
-      build_variant:
-        type: string
-        required: true
-        default: 'tiny'
 
 permissions:
   contents: write
@@ -39,17 +29,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: microslate
-          submodules: recursive
-
-      - name: "Patch freeink-sdk — InputManager ADC dual-framework fix"
-        working-directory: microslate
-        run: python3 scripts/patch-freeink-sdk/00_fix_input_manager_dual_framework_adc.py
 
       - name: Checkout CrossInk na tag especificada
         uses: actions/checkout@v4
         with:
           repository: uxjulia/CrossInk
-          ref: ${{ inputs.crossink_tag }}
+          ref: ${{ github.event.inputs.crossink_tag }}
           submodules: recursive
           path: crossink
 
@@ -106,12 +91,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-crossink-${{ inputs.crossink_tag }}-${{ hashFiles('crossink/platformio.ini') }}
+          key: pio-crossink-${{ github.event.inputs.crossink_tag }}-${{ hashFiles('crossink/platformio.ini') }}
           restore-keys: pio-crossink-
 
       - name: Compilar CrossInk com dual-boot
         working-directory: crossink
-        run: pio run -e ${{ inputs.build_variant }}
+        run: pio run -e ${{ github.event.inputs.build_variant }}
 
       # -----------------------------------------------------------------------
       # Build — MicroSlate (padrão desse repo, com o fix do OtaBootSwitch)
@@ -141,15 +126,15 @@ jobs:
       - name: Montar binários
         run: |
           BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
-          TAG=${{ inputs.crossink_tag }}
-          VARIANT=${{ inputs.build_variant }}
+          TAG=${{ github.event.inputs.crossink_tag }}
+          VARIANT=${{ github.event.inputs.build_variant }}
 
           CI_FW=crossink/.pio/build/${VARIANT}/firmware.bin
           CI_BOOT=crossink/.pio/build/${VARIANT}/bootloader.bin
           CI_PART=crossink/.pio/build/${VARIANT}/partitions.bin
-          MS_FW=microslate/.pio/build/xteink_x3_x4/firmware.bin
-          MS_BOOT=microslate/.pio/build/xteink_x3_x4/bootloader.bin
-          MS_PART=microslate/.pio/build/xteink_x3_x4/partitions.bin
+          MS_FW=microslate/.pio/build/xteink_x4/firmware.bin
+          MS_BOOT=microslate/.pio/build/xteink_x4/bootloader.bin
+          MS_PART=microslate/.pio/build/xteink_x4/partitions.bin
 
           # 1) CrossInk standalone — instalação do zero, sem MicroSlate
           esptool.py --chip esp32c3 merge_bin \
@@ -186,45 +171,25 @@ jobs:
           # 5) Slot-only — para quem já tem dual-boot e quer atualizar só o MicroSlate
           cp "$MS_FW" microslate-dualboot-slot-only.bin
 
-      - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: crossink-microslate-firmware-${{ github.run_number }}
-          path: |
-            crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-standalone-full.bin
-            microslate-standalone-full.bin
-            dualboot-crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-microslate-full.bin
-            crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-dualboot-slot-only.bin
-            microslate-dualboot-slot-only.bin
-          retention-days: 14
-
       # -----------------------------------------------------------------------
-      # Publicar release (só quando este workflow roda diretamente/sozinho;
-      # ao ser chamado como reusable workflow por build-all.yml, esse passo
-      # fica de fora — evita releases duplicadas quando build-all.yml chama
-      # este workflow junto com o do CrossPoint. github.event_name não muda
-      # dentro de um reusable workflow chamado — fica igual ao evento que
-      # disparou o workflow raiz — por isso a checagem usa
-      # github.event.workflow (caminho do arquivo disparado originalmente).
-      # Os binários já ficam disponíveis como artifact acima em ambos os casos.
+      # Publicar release
       # -----------------------------------------------------------------------
       - name: Publicar release
-        if: github.event.workflow == '.github/workflows/build-crossink.yml'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-dualboot
-          name: "CrossInk ${{ inputs.crossink_tag }} (${{ inputs.build_variant }}) + MicroSlate Dual-Boot"
+          tag_name: crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-dualboot
+          name: "CrossInk ${{ github.event.inputs.crossink_tag }} (${{ github.event.inputs.build_variant }}) + MicroSlate Dual-Boot"
           files: |
-            crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-standalone-full.bin
+            crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-standalone-full.bin
             microslate-standalone-full.bin
-            dualboot-crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-microslate-full.bin
-            crossink-${{ inputs.crossink_tag }}-${{ inputs.build_variant }}-dualboot-slot-only.bin
+            dualboot-crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-microslate-full.bin
+            crossink-${{ github.event.inputs.crossink_tag }}-${{ github.event.inputs.build_variant }}-dualboot-slot-only.bin
             microslate-dualboot-slot-only.bin
           body: |
-            ## CrossInk ${{ inputs.crossink_tag }} (${{ inputs.build_variant }}) + MicroSlate — Dual-Boot
+            ## CrossInk ${{ github.event.inputs.crossink_tag }} (${{ github.event.inputs.build_variant }}) + MicroSlate — Dual-Boot
 
             Compilado a partir do [CrossInk](https://github.com/uxjulia/CrossInk) oficial
-            `${{ inputs.crossink_tag }}` com patch de dual-boot aplicado
+            `${{ github.event.inputs.crossink_tag }}` com patch de dual-boot aplicado
             automaticamente em CI, mais o MicroSlate deste repositório (com o teclado
             US-International e o fix de troca de partição via `ota_boot::switchTo`).
 

@@ -1,11 +1,9 @@
-name: Build and Release (MicroSlate)
+name: Build and Release
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: {}
-  workflow_call: {}
 
 permissions:
   contents: write
@@ -16,11 +14,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: "Patch freeink-sdk — InputManager ADC dual-framework fix"
-        run: python3 scripts/patch-freeink-sdk/00_fix_input_manager_dual_framework_adc.py
 
       - uses: actions/cache@v4
         with:
@@ -48,7 +41,7 @@ jobs:
           # --- Arquivo 1: slot-only ---
           # Grava SOMENTE o MicroSlate no slot app1 (0x650000).
           # Use este para atualizar sem apagar o CrossPoint.
-          cp .pio/build/xteink_x3_x4/firmware.bin \
+          cp .pio/build/xteink_x4/firmware.bin \
              microslate-usi-slot-only-${{ github.ref_name }}.bin
 
           # --- Arquivo 2: merged completo (instalação do zero) ---
@@ -57,22 +50,12 @@ jobs:
           esptool.py --chip esp32c3 merge_bin \
             --flash_mode dio --flash_size 16MB \
             -o microslate-usi-full-${{ github.ref_name }}.bin \
-            0x0     .pio/build/xteink_x3_x4/bootloader.bin \
-            0x8000  .pio/build/xteink_x3_x4/partitions.bin \
+            0x0     .pio/build/xteink_x4/bootloader.bin \
+            0x8000  .pio/build/xteink_x4/partitions.bin \
             0xe000  "$BOOT_APP0" \
-            0x10000 .pio/build/xteink_x3_x4/firmware.bin
-
-      - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: microslate-firmware-${{ github.run_number }}
-          path: |
-            microslate-usi-slot-only-*.bin
-            microslate-usi-full-*.bin
-          retention-days: 14
+            0x10000 .pio/build/xteink_x4/firmware.bin
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |

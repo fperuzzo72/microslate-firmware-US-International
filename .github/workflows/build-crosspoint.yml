@@ -7,12 +7,6 @@ on:
         description: 'Tag do CrossPoint a compilar (ex: 1.4.1)'
         required: true
         default: '1.4.1'
-  workflow_call:
-    inputs:
-      crosspoint_tag:
-        type: string
-        required: true
-        default: '1.4.1'
 
 permissions:
   contents: write
@@ -26,17 +20,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: microslate
-          submodules: recursive
-
-      - name: "Patch freeink-sdk — InputManager ADC dual-framework fix"
-        working-directory: microslate
-        run: python3 scripts/patch-freeink-sdk/00_fix_input_manager_dual_framework_adc.py
 
       - name: Checkout CrossPoint na tag especificada
         uses: actions/checkout@v4
         with:
           repository: crosspoint-reader/crosspoint-reader
-          ref: ${{ inputs.crosspoint_tag }}
+          ref: ${{ github.event.inputs.crosspoint_tag }}
           submodules: recursive
           path: crosspoint
 
@@ -268,37 +257,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-crosspoint-${{ inputs.crosspoint_tag }}-${{ hashFiles('crosspoint/platformio.ini') }}
+          key: pio-crosspoint-${{ github.event.inputs.crosspoint_tag }}-${{ hashFiles('crosspoint/platformio.ini') }}
           restore-keys: pio-crosspoint-
 
       - name: Compilar CrossPoint com dual-boot
         working-directory: crosspoint
         run: pio run -e gh_release
-
-      # -----------------------------------------------------------------------
-      # Build — MicroSlate (padrão desse repo, com o fix do OtaBootSwitch)
-      # -----------------------------------------------------------------------
-      - uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: pio-microslate-${{ hashFiles('microslate/platformio.ini', 'microslate/sdkconfig.defaults') }}
-          restore-keys: pio-microslate-
-
-      - name: Instalar PlatformIO (MicroSlate)
-        run: pip install platformio
-
-      - name: Compilar MicroSlate
-        working-directory: microslate
-        # IDF_COMPONENT_MANAGER=0 contorna um bug conhecido do
-        # espressif32@6.12.0 (framework arduino+espidf): o Component Manager
-        # tenta descobrir a versão do ESP-IDF via `git describe`, mas o
-        # pacote framework-espidf é instalado como .zip extraído (sem
-        # .git), então a checagem falha com "fatal: not a git repository" e
-        # a resolução da dependência "idf" quebra antes de compilar
-        # qualquer arquivo do projeto. Ver platformio/platform-espressif32#1663.
-        env:
-          IDF_COMPONENT_MANAGER: "0"
-        run: pio run
 
       # -----------------------------------------------------------------------
       # Montar binários
@@ -307,122 +271,58 @@ jobs:
         run: |
           pip install esptool
           BOOT_APP0=$(find ~/.platformio -name "boot_app0.bin" | head -1)
-          TAG=${{ inputs.crosspoint_tag }}
+          TAG=${{ github.event.inputs.crosspoint_tag }}
 
-          CP_FW=crosspoint/.pio/build/gh_release/firmware.bin
-          CP_BOOT=crosspoint/.pio/build/gh_release/bootloader.bin
-          CP_PART=crosspoint/.pio/build/gh_release/partitions.bin
-          MS_FW=microslate/.pio/build/xteink_x3_x4/firmware.bin
-          MS_BOOT=microslate/.pio/build/xteink_x3_x4/bootloader.bin
-          MS_PART=microslate/.pio/build/xteink_x3_x4/partitions.bin
+          # slot-only: firmware.bin isolado → gravar em 0x10000 (app0)
+          cp crosspoint/.pio/build/gh_release/firmware.bin \
+             crosspoint-dualboot-${TAG}-slot-only.bin
 
-          # 1) CrossPoint standalone — instalação do zero, sem MicroSlate
+          # merged completo → gravar em 0x0 (instalação do zero)
           esptool.py --chip esp32c3 merge_bin \
             --flash_mode dio --flash_size 16MB \
-            -o crosspoint-${TAG}-standalone-full.bin \
-            0x0     "$CP_BOOT" \
-            0x8000  "$CP_PART" \
+            -o crosspoint-dualboot-${TAG}-full.bin \
+            0x0     crosspoint/.pio/build/gh_release/bootloader.bin \
+            0x8000  crosspoint/.pio/build/gh_release/partitions.bin \
             0xe000  "$BOOT_APP0" \
-            0x10000 "$CP_FW"
-
-          # 2) MicroSlate standalone — instalação do zero, sem CrossPoint
-          esptool.py --chip esp32c3 merge_bin \
-            --flash_mode dio --flash_size 16MB \
-            -o microslate-standalone-full.bin \
-            0x0     "$MS_BOOT" \
-            0x8000  "$MS_PART" \
-            0xe000  "$BOOT_APP0" \
-            0x10000 "$MS_FW"
-
-          # 3) Dual-boot completo em um único arquivo — CrossPoint no app0 (boot
-          #    padrão, 0x10000) + MicroSlate no app1 (0x650000)
-          esptool.py --chip esp32c3 merge_bin \
-            --flash_mode dio --flash_size 16MB \
-            -o dualboot-crosspoint-${TAG}-microslate-full.bin \
-            0x0     "$CP_BOOT" \
-            0x8000  "$CP_PART" \
-            0xe000  "$BOOT_APP0" \
-            0x10000 "$CP_FW" \
-            0x650000 "$MS_FW"
-
-          # 4) Slot-only — para quem já tem dual-boot e quer atualizar só o CrossPoint
-          cp "$CP_FW" crosspoint-${TAG}-dualboot-slot-only.bin
-
-          # 5) Slot-only — para quem já tem dual-boot e quer atualizar só o MicroSlate
-          cp "$MS_FW" microslate-dualboot-slot-only.bin
-
-      - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: crosspoint-microslate-firmware-${{ github.run_number }}
-          path: |
-            crosspoint-${{ inputs.crosspoint_tag }}-standalone-full.bin
-            microslate-standalone-full.bin
-            dualboot-crosspoint-${{ inputs.crosspoint_tag }}-microslate-full.bin
-            crosspoint-${{ inputs.crosspoint_tag }}-dualboot-slot-only.bin
-            microslate-dualboot-slot-only.bin
-          retention-days: 14
+            0x10000 crosspoint/.pio/build/gh_release/firmware.bin
 
       # -----------------------------------------------------------------------
-      # Publicar release (só quando este workflow roda diretamente/sozinho;
-      # ao ser chamado como reusable workflow por build-all.yml, esse passo
-      # fica de fora — evita releases duplicadas quando build-all.yml chama
-      # este workflow junto com o do CrossInk. github.event_name não muda
-      # dentro de um reusable workflow chamado — fica igual ao evento que
-      # disparou o workflow raiz — por isso a checagem usa
-      # github.event.workflow (caminho do arquivo disparado originalmente).
+      # Publicar release
       # -----------------------------------------------------------------------
       - name: Publicar release
-        if: github.event.workflow == '.github/workflows/build-crosspoint.yml'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: crosspoint-${{ inputs.crosspoint_tag }}-microslate-dualboot
-          name: "CrossPoint ${{ inputs.crosspoint_tag }} + MicroSlate Dual-Boot"
+          tag_name: crosspoint-${{ github.event.inputs.crosspoint_tag }}-dualboot
+          name: "CrossPoint ${{ github.event.inputs.crosspoint_tag }} Dual-Boot"
           files: |
-            crosspoint-${{ inputs.crosspoint_tag }}-standalone-full.bin
-            microslate-standalone-full.bin
-            dualboot-crosspoint-${{ inputs.crosspoint_tag }}-microslate-full.bin
-            crosspoint-${{ inputs.crosspoint_tag }}-dualboot-slot-only.bin
-            microslate-dualboot-slot-only.bin
+            crosspoint-dualboot-${{ github.event.inputs.crosspoint_tag }}-slot-only.bin
+            crosspoint-dualboot-${{ github.event.inputs.crosspoint_tag }}-full.bin
           body: |
-            ## CrossPoint ${{ inputs.crosspoint_tag }} + MicroSlate — Dual-Boot
+            ## CrossPoint ${{ github.event.inputs.crosspoint_tag }} com Dual-Boot
 
-            Compilado a partir do [CrossPoint](https://github.com/crosspoint-reader/crosspoint-reader)
-            oficial `${{ inputs.crosspoint_tag }}` com patch de dual-boot aplicado
-            automaticamente em CI, mais o MicroSlate deste repositório (teclado
-            US-International, suporte X3/X4).
-
-            No menu principal do CrossPoint aparece uma entrada **MicroSlate**; no menu
-            do MicroSlate aparece uma entrada **CrossPoint** — cada uma reinicia no outro app.
+            Compilado a partir do CrossPoint oficial `${{ github.event.inputs.crosspoint_tag }}`
+            com patch de dual-boot aplicado automaticamente em CI.
 
             ### Qual arquivo usar?
 
             | Situação | Arquivo | Endereço |
             |---|---|---|
-            | Instalação do zero, dual-boot completo (recomendado) | `dualboot-crosspoint-*-microslate-full.bin` | `0x0` |
-            | Instalação do zero, só CrossPoint | `crosspoint-*-standalone-full.bin` | `0x0` |
-            | Instalação do zero, só MicroSlate | `microslate-standalone-full.bin` | `0x0` |
-            | Já tem dual-boot, atualizar só o CrossPoint | `crosspoint-*-dualboot-slot-only.bin` | `0x10000` |
-            | Já tem dual-boot, atualizar só o MicroSlate | `microslate-dualboot-slot-only.bin` | `0x650000` |
+            | Já tem dual-boot instalado, quer atualizar só o CrossPoint | `slot-only` | `0x10000` |
+            | Instalação do zero (sem MicroSlate ainda) | `full` | `0x0` |
 
             ### Como gravar (browser)
 
-            Acesse [esp.huhn.me](https://esp.huhn.me) no Chrome/Edge, conecte o X3/X4,
+            Acesse [esp.huhn.me](https://esp.huhn.me) no Chrome/Edge, conecte o X4,
             selecione o arquivo e informe o endereço correto.
 
             ### Como gravar (terminal)
 
             ```bash
-            # Dual-boot completo, do zero
-            esptool.py --chip esp32c3 --port COM5 --baud 460800 \
-              write_flash 0x0 dualboot-crosspoint-*-microslate-full.bin
-
             # Atualizar só o CrossPoint (dual-boot já instalado)
             esptool.py --chip esp32c3 --port COM5 --baud 460800 \
-              write_flash 0x10000 crosspoint-*-dualboot-slot-only.bin
+              write_flash 0x10000 crosspoint-dualboot-*-slot-only.bin
 
-            # Atualizar só o MicroSlate (dual-boot já instalado)
+            # Instalação do zero
             esptool.py --chip esp32c3 --port COM5 --baud 460800 \
-              write_flash 0x650000 microslate-dualboot-slot-only.bin
+              write_flash 0x0 crosspoint-dualboot-*-full.bin
             ```
-
