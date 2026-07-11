@@ -13,6 +13,20 @@ void HalGPIO::begin() {
   _deviceType = freeink::selectXteinkDevice() ? DeviceType::X3 : DeviceType::X4;
 
   inputMgr.begin();
+
+  // Buttons on both X3 and X4 are read as an analog "ladder" (InputStyle::
+  // XteinkAdcLadder) — several buttons share one ADC pin, distinguished by
+  // voltage range. ESP32's ADC1 is known to read noisy/settling values for
+  // the first several samples right after a pin starts being read, which can
+  // land inside a button's voltage window and register as a phantom press —
+  // observed as the main menu jumping to the second item on first boot with
+  // nothing touched. Discard a handful of reads here, before the main loop
+  // starts trusting "just pressed" edges, to let the ADC settle first.
+  for (int i = 0; i < 5; i++) {
+    inputMgr.update();
+    delay(20);
+  }
+
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
   if (deviceIsX4()) {
     // BAT_GPIO0 is configured for ADC via adc1_config_channel_atten in InputManager::begin()

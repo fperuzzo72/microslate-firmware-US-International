@@ -658,7 +658,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     snprintf(foundStr, sizeof(foundStr), "Found: %d", deviceCount);
     drawClippedText(renderer, FONT_SMALL, sw / 2, 60, foundStr, sw / 2 - 10, tc);
 
-    scanStatusBottom = 60 + renderer.getLineHeight(FONT_SMALL) + 6;
+    scanStatusBottom = 60 + renderer.getLineHeight(FONT_SMALL) + 12;
   }
 
   // Device list — skipped during passkey entry (that UI owns this screen
@@ -676,7 +676,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     // extent (ascender+descender, ~35px) with margin, so the selection
     // highlight never clips the bottom of descenders (g/y/p/q). Same
     // formula used by every list in this file.
-    int listTop = scanStatusBottom + renderer.getLineHeight(FONT_SMALL) + 6;
+    int listTop = scanStatusBottom + renderer.getLineHeight(FONT_SMALL) + 12;
     int lineH = renderer.getLineHeight(FONT_UI) + 8;
     int footerZone = 100;  // keep in sync with the "yPos > sh - 100" check below
     int maxDevicesToShow = (sh - listTop - footerZone) / lineH;
