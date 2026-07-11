@@ -41,6 +41,10 @@ jobs:
           path: microslate
           submodules: recursive
 
+      - name: "Patch freeink-sdk — InputManager ADC dual-framework fix"
+        working-directory: microslate
+        run: python3 scripts/patch-freeink-sdk/00_fix_input_manager_dual_framework_adc.py
+
       - name: Checkout CrossInk na tag especificada
         uses: actions/checkout@v4
         with:

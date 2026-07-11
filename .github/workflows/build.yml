@@ -19,6 +19,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: "Patch freeink-sdk — InputManager ADC dual-framework fix"
+        run: python3 scripts/patch-freeink-sdk/00_fix_input_manager_dual_framework_adc.py
+
       - uses: actions/cache@v4
         with:
           path: |
