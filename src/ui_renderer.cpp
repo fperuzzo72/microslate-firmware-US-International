@@ -211,8 +211,8 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   constexpr int bm = 60;
   if (sh > bm + 40) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
-    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12, "Arrows: Navigate  Enter: Select", 0, tc);
-    drawBleStatus(renderer, 20, sh - bm + 28);
+    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 8, "Arrows: Navigate  Enter: Select", 0, tc);
+    drawBleStatus(renderer, 20, sh - bm + 8 + renderer.getLineHeight(FONT_SMALL) + 2);
   }
   drawBattery(renderer, gpio);
 
@@ -737,8 +737,9 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   constexpr int bm = 60;
   if (sh > bm + 30) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
-    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8,  "Enter:Connect  Right:Scan", 0, tc);
-    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 22, "Left:Disconnect  Esc:Back", 0, tc);
+    int footerLineH = renderer.getLineHeight(FONT_SMALL) + 2;
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8, "Enter:Connect  Right:Scan", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8 + footerLineH, "Left:Disconnect  Esc:Back", 0, tc);
   }
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
@@ -766,7 +767,7 @@ void drawPairedKeyboardsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     // margin — same formula used by every list in this file.
     int lineH = renderer.getLineHeight(FONT_UI) + 8;
     int listTop = 44;
-    constexpr int bm = 52;
+    constexpr int bm = 60;
     int footerZone = bm + 8;  // keep list from drawing into the footer below
     int maxVisible = (sh - listTop - footerZone) / lineH;
     if (maxVisible < 1) maxVisible = 1;
@@ -798,11 +799,12 @@ void drawPairedKeyboardsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
     }
   }
 
-  constexpr int bm = 52;
+  constexpr int bm = 60;
   if (sh > bm + 30) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
-    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8,  "Enter:Connect  D:Forget", 0, tc);
-    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 22, "Left:Disconnect  Esc:Back", 0, tc);
+    int footerLineH = renderer.getLineHeight(FONT_SMALL) + 2;
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8, "Enter:Connect  D:Forget", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 10, sh - bm + 8 + footerLineH, "Left:Disconnect  Esc:Back", 0, tc);
   }
 
   renderer.beginRefresh(HalDisplay::FAST_REFRESH);
